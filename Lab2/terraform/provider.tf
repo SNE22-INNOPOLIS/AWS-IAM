@@ -17,13 +17,17 @@ terraform {
   }
 }
 
-# Primary account provider (Security/Audit account)
+# =============================================================================
+# Security Account Provider (Primary - where audit resources are deployed)
+# =============================================================================
 provider "aws" {
   region = var.primary_region
+  profile = "security"
 
   default_tags {
     tags = {
       Project     = "SecurityLab"
+      Lab         = "Lab2-IAM-Audit"
       Environment = var.environment
       ManagedBy   = "Terraform"
       Purpose     = "IAM-Permission-Analysis"
@@ -31,38 +35,23 @@ provider "aws" {
   }
 }
 
-# Provider for secondary account (if using cross-account)
+# =============================================================================
+# Workloads Account Provider (For cross-account resources)
+# =============================================================================
 provider "aws" {
-  alias  = "member_account_1"
+  alias  = "dev"
   region = var.primary_region
 
   assume_role {
-    role_arn     = "arn:aws:iam::${var.member_account_ids[0]}:role/${var.cross_account_role_name}"
-    session_name = "TerraformSecurityLab"
+    role_arn     = "arn:aws:iam::${var.dev_account_id}:role/${var.cross_account_role_name}"
+    session_name = "TerraformLab2"
+    external_id  = var.cross_account_external_id
   }
 
   default_tags {
     tags = {
       Project     = "SecurityLab"
-      Environment = var.environment
-      ManagedBy   = "Terraform"
-    }
-  }
-}
-
-# Provider for third account (if using cross-account)
-provider "aws" {
-  alias  = "member_account_2"
-  region = var.primary_region
-
-  assume_role {
-    role_arn     = "arn:aws:iam::${var.member_account_ids[1]}:role/${var.cross_account_role_name}"
-    session_name = "TerraformSecurityLab"
-  }
-
-  default_tags {
-    tags = {
-      Project     = "SecurityLab"
+      Lab         = "Lab2-IAM-Audit"
       Environment = var.environment
       ManagedBy   = "Terraform"
     }

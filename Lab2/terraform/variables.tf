@@ -2,6 +2,32 @@
 # Variables for Multi-Account Security Lab
 # =============================================================================
 
+variable "security_account_id" {
+  description = "AWS Account ID of the Security/Audit account (from Lab1)"
+  type        = string
+}
+
+variable "dev_account_id" {
+  description = "AWS Account ID of the Workloads account (from Lab1)"
+  type        = string
+}
+
+variable "cross_account_role_name" {
+  description = "Name of cross-account role created in Lab1"
+  type        = string
+  default     = "CrossAccountAuditRole"
+}
+
+variable "cross_account_external_id" {
+  description = "External ID for cross-account role assumption (from Lab1)"
+  type        = string
+  default     = "security-lab-audit"
+}
+
+# =============================================================================
+# Environment Configuration
+# =============================================================================
+
 variable "environment" {
   description = "Environment name (e.g., lab, dev, staging)"
   type        = string
@@ -14,33 +40,14 @@ variable "primary_region" {
   default     = "us-east-1"
 }
 
-variable "additional_regions" {
-  description = "Additional regions for Access Analyzer (for organization-level analysis)"
-  type        = list(string)
-  default     = ["us-west-2", "eu-west-1"]
-}
+# =============================================================================
+# Access Analyzer Configuration
+# =============================================================================
 
-variable "security_account_id" {
-  description = "AWS Account ID of the security/audit account"
-  type        = string
-}
-
-variable "member_account_ids" {
-  description = "List of member account IDs to analyze"
-  type        = list(string)
-  default     = []
-}
-
-variable "cross_account_role_name" {
-  description = "Name of the cross-account role for Terraform to assume"
-  type        = string
-  default     = "SecurityLabCrossAccountRole"
-}
-
-variable "enable_organization_analyzer" {
-  description = "Enable organization-level Access Analyzer (requires AWS Organizations)"
+variable "enable_access_analyzer" {
+  description = "Enable IAM Access Analyzer"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "unused_threshold_days" {
@@ -49,11 +56,31 @@ variable "unused_threshold_days" {
   default     = 90
 }
 
+# =============================================================================
+# Lambda Configuration
+# =============================================================================
+
 variable "lambda_schedule_expression" {
   description = "CloudWatch Events schedule expression for Lambda"
   type        = string
   default     = "rate(7 days)"
 }
+
+variable "lambda_timeout" {
+  description = "Lambda function timeout in seconds"
+  type        = number
+  default     = 900
+}
+
+variable "lambda_memory_size" {
+  description = "Lambda function memory size in MB"
+  type        = number
+  default     = 512
+}
+
+# =============================================================================
+# Notification Configuration
+# =============================================================================
 
 variable "notification_email" {
   description = "Email address for audit report notifications"
@@ -61,13 +88,45 @@ variable "notification_email" {
   default     = ""
 }
 
+# =============================================================================
+# S3 Configuration
+# =============================================================================
+
 variable "s3_report_bucket_name" {
-  description = "S3 bucket name for storing audit reports"
+  description = "S3 bucket name for storing audit reports (leave empty for auto-generated name)"
   type        = string
   default     = ""
 }
 
-variable "test_roles_to_create" {
+variable "s3_lifecycle_ia_days" {
+  description = "Days before transitioning reports to Standard-IA"
+  type        = number
+  default     = 90
+}
+
+variable "s3_lifecycle_glacier_days" {
+  description = "Days before transitioning reports to Glacier"
+  type        = number
+  default     = 180
+}
+
+variable "s3_lifecycle_expiration_days" {
+  description = "Days before expiring reports"
+  type        = number
+  default     = 365
+}
+
+# =============================================================================
+# Test Resources Configuration
+# =============================================================================
+
+variable "create_test_roles" {
+  description = "Create test IAM roles for demonstration"
+  type        = bool
+  default     = true
+}
+
+variable "test_roles" {
   description = "List of test IAM roles to create for demonstration"
   type = list(object({
     name        = string
@@ -87,6 +146,10 @@ variable "test_roles_to_create" {
     }
   ]
 }
+
+# =============================================================================
+# Tags
+# =============================================================================
 
 variable "tags" {
   description = "Additional tags to apply to all resources"

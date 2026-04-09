@@ -2,10 +2,6 @@
 # IAM Access Analyzer Module
 # =============================================================================
 
-# =============================================================================
-# IAM Access Analyzer Module
-# =============================================================================
-
 terraform {
   required_providers {
     aws = {
@@ -14,18 +10,6 @@ terraform {
     }
   }
 }
-
-# ... rest of your existing code below ...
-
-resource "aws_accessanalyzer_analyzer" "main" {
-  analyzer_name = var.analyzer_name
-  type          = var.analyzer_type
-
-  tags = merge(var.tags, {
-    Name = var.analyzer_name
-  })
-}
-
 
 resource "aws_accessanalyzer_analyzer" "main" {
   analyzer_name = var.analyzer_name

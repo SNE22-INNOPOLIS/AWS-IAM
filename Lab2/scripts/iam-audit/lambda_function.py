@@ -23,25 +23,21 @@ from botocore.exceptions import ClientError, BotoCoreError
 # Configuration
 # =============================================================================
 
+
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 UNUSED_THRESHOLD_DAYS = int(os.environ.get('UNUSED_THRESHOLD_DAYS', '90'))
 S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', '')
 SNS_TOPIC_ARN = os.environ.get('SNS_TOPIC_ARN', '')
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'lab')
-MEMBER_ACCOUNT_IDS = json.loads(os.environ.get('MEMBER_ACCOUNT_IDS', '[]'))
-CROSS_ACCOUNT_ROLE_NAME = os.environ.get('CROSS_ACCOUNT_ROLE_NAME', 'IAMAuditCrossAccountRole')
 
-# Configure logging
-logger = logging.getLogger()
-logger.setLevel(LOG_LEVEL)
+# Account configuration (from Lab1)
+SECURITY_ACCOUNT_ID = os.environ.get('SECURITY_ACCOUNT_ID', '')
+WORKLOADS_ACCOUNT_ID = os.environ.get('WORKLOADS_ACCOUNT_ID', '')
+CROSS_ACCOUNT_ROLE_NAME = os.environ.get('CROSS_ACCOUNT_ROLE_NAME', 'CrossAccountAuditRole')
+CROSS_ACCOUNT_EXTERNAL_ID = os.environ.get('CROSS_ACCOUNT_EXTERNAL_ID', 'security-lab-audit')
 
-# Add handler if running locally
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    ))
-    logger.addHandler(handler)
+# Derived configuration
+ACCOUNTS_TO_AUDIT = [SECURITY_ACCOUNT_ID, WORKLOADS_ACCOUNT_ID] if WORKLOADS_ACCOUNT_ID else [SECURITY_ACCOUNT_ID]
 
 
 # =============================================================================
@@ -610,33 +606,24 @@ Do NOT automatically remove permissions - review and test changes first.
 
 def get_cross_account_session(
     account_id: str,
-    role_name: str,
-    external_id: Optional[str] = None
+    role_name: str = CROSS_ACCOUNT_ROLE_NAME,
+    external_id: str = CROSS_ACCOUNT_EXTERNAL_ID
 ) -> boto3.Session:
     """
-    Get a session for a cross-account role.
-    
-    Args:
-        account_id: Target AWS account ID
-        role_name: Name of the role to assume
-        external_id: External ID for role assumption
-        
-    Returns:
-        Boto3 session for the target account
+    Get a session for the Workloads account using Lab1 cross-account role.
     """
     sts_client = boto3.client('sts')
     
     role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
     
-    assume_params = {
-        'RoleArn': role_arn,
-        'RoleSessionName': f'IAMAudit-{datetime.now().strftime("%Y%m%d%H%M%S")}'
-    }
+    logger.info(f"Assuming role {role_arn} for cross-account access")
     
-    if external_id:
-        assume_params['ExternalId'] = external_id
+    response = sts_client.assume_role(
+        RoleArn=role_arn,
+        RoleSessionName=f'IAMAudit-{datetime.now().strftime("%Y%m%d%H%M%S")}',
+        ExternalId=external_id
+    )
     
-    response = sts_client.assume_role(**assume_params)
     credentials = response['Credentials']
     
     return boto3.Session(
@@ -653,17 +640,7 @@ def get_cross_account_session(
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
     Lambda handler for IAM permission auditing.
-    
-    Event parameters:
-        - report_type: "full" | "roles_only" | "users_only" | "specific"
-        - threshold_days: Override default threshold (optional)
-        - entity_arn: Specific entity to audit (required if report_type is "specific")
-        - filter_pattern: Filter pattern for role names (optional)
-        - send_notification: Whether to send SNS notification (default: True)
-        - accounts: List of account IDs to audit (optional, for cross-account)
-    
-    Returns:
-        Dict with statusCode and report summary
+    Audits both Security Account and Workloads Account (from Lab1).
     """
     logger.info(f"Starting IAM audit with event: {json.dumps(event)}")
     
@@ -674,17 +651,21 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         entity_arn = event.get('entity_arn')
         filter_pattern = event.get('filter_pattern')
         send_notification_flag = event.get('send_notification', True)
-        accounts = event.get('accounts', [])
+        
+        # Use configured accounts from Lab1
+        accounts_to_audit = event.get('audit_accounts', ACCOUNTS_TO_AUDIT)
         
         all_entities = []
         accounts_analyzed = []
         
-        # Audit current account
+        # =================================================================
+        # Audit Security Account (current account)
+        # =================================================================
+        logger.info(f"Auditing Security Account: {SECURITY_ACCOUNT_ID}")
         auditor = IAMPermissionAuditor(threshold_days=threshold_days)
         accounts_analyzed.append(auditor.account_id)
         
         if report_type == 'specific' and entity_arn:
-            # Audit specific entity
             result = auditor.audit_specific_entity(entity_arn)
             all_entities.append(result)
         elif report_type == 'roles_only':
@@ -692,29 +673,33 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         elif report_type == 'users_only':
             all_entities.extend(auditor.audit_all_users())
         else:
-            # Full audit
             all_entities.extend(auditor.audit_all_roles(filter_pattern=filter_pattern))
             all_entities.extend(auditor.audit_all_users())
         
-        # Audit cross-account if specified
-        cross_account_ids = accounts or MEMBER_ACCOUNT_IDS
-        for account_id in cross_account_ids:
+        # =================================================================
+        # Audit Workloads Account (cross-account from Lab1)
+        # =================================================================
+        if WORKLOADS_ACCOUNT_ID and WORKLOADS_ACCOUNT_ID in accounts_to_audit:
             try:
-                logger.info(f"Auditing cross-account: {account_id}")
-                session = get_cross_account_session(
-                    account_id=account_id,
+                logger.info(f"Auditing Workloads Account: {WORKLOADS_ACCOUNT_ID}")
+                workloads_session = get_cross_account_session(
+                    account_id=WORKLOADS_ACCOUNT_ID,
                     role_name=CROSS_ACCOUNT_ROLE_NAME,
-                    external_id=f"security-lab-audit-{ENVIRONMENT}"
+                    external_id=CROSS_ACCOUNT_EXTERNAL_ID
                 )
-                cross_account_auditor = IAMPermissionAuditor(
-                    session=session,
+                workloads_auditor = IAMPermissionAuditor(
+                    session=workloads_session,
                     threshold_days=threshold_days
                 )
-                all_entities.extend(cross_account_auditor.audit_all_roles())
-                all_entities.extend(cross_account_auditor.audit_all_users())
-                accounts_analyzed.append(account_id)
+                
+                if report_type != 'specific':
+                    all_entities.extend(workloads_auditor.audit_all_roles(filter_pattern=filter_pattern))
+                    all_entities.extend(workloads_auditor.audit_all_users())
+                
+                accounts_analyzed.append(WORKLOADS_ACCOUNT_ID)
+                
             except Exception as e:
-                logger.error(f"Failed to audit account {account_id}: {e}")
+                logger.error(f"Failed to audit Workloads Account {WORKLOADS_ACCOUNT_ID}: {e}")
         
         # Generate report
         report = auditor.generate_report(all_entities, accounts_analyzed)
@@ -728,11 +713,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if send_notification_flag and SNS_TOPIC_ARN and s3_uri:
             send_notification(report, SNS_TOPIC_ARN, s3_uri)
         
-        # Return summary
         return {
             'statusCode': 200,
             'body': {
                 'report_id': report.report_id,
+                'accounts_analyzed': accounts_analyzed,
                 'summary': report.summary,
                 's3_uri': s3_uri,
                 'recommendations': report.recommendations[:5]

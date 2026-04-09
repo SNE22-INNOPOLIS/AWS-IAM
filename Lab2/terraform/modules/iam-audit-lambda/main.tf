@@ -2,6 +2,19 @@
 # IAM Audit Lambda Module
 # =============================================================================
 
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 5.0"
+    }
+    archive = {
+      source  = "hashicorp/archive"
+      version = ">= 2.4"
+    }
+  }
+}
+
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 data "aws_partition" "current" {}
@@ -48,7 +61,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Resource = "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:*"
       },
       {
-        Sid    = "IAMReadAccess"
+        Sid    = "IAMReadAccessSecurityAccount"
         Effect = "Allow"
         Action = [
           "iam:GenerateServiceLastAccessedDetails",
@@ -105,13 +118,10 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Resource = var.sns_topic_arn
       },
       {
-        Sid    = "CrossAccountAssume"
+        Sid    = "CrossAccountAssumeWorkloads"
         Effect = "Allow"
         Action = "sts:AssumeRole"
-        Resource = [
-          for account_id in var.member_account_ids :
-          "arn:${data.aws_partition.current.partition}:iam::${account_id}:role/${var.cross_account_role_name}"
-        ]
+        Resource = "arn:${data.aws_partition.current.partition}:iam::${var.dev_account_id}:role/${var.cross_account_role_name}"
       }
     ]
   })
@@ -132,7 +142,9 @@ data "archive_file" "lambda_package" {
     ".pytest_cache",
     "tests",
     "README.md",
-    "iam_audit_standalone.py"
+    "iam_audit_standalone.py",
+    ".venv",
+    "venv"
   ]
 }
 
@@ -142,27 +154,29 @@ data "archive_file" "lambda_package" {
 
 resource "aws_lambda_function" "iam_auditor" {
   function_name = var.function_name
-  description   = "Audits IAM permissions and identifies unused services"
+  description   = "Audits IAM permissions and identifies unused services across Security and Workloads accounts"
 
   filename         = data.archive_file.lambda_package.output_path
   source_code_hash = data.archive_file.lambda_package.output_base64sha256
 
-  handler = "lambda_function.lambda_handler"
-  runtime = "python3.11"
-  timeout = 900  # 15 minutes for large accounts
-  memory_size = 512
+  handler     = "lambda_function.lambda_handler"
+  runtime     = "python3.11"
+  timeout     = var.lambda_timeout
+  memory_size = var.lambda_memory_size
 
   role = aws_iam_role.lambda_role.arn
 
   environment {
     variables = {
-      UNUSED_THRESHOLD_DAYS   = tostring(var.unused_threshold_days)
-      S3_BUCKET_NAME          = var.s3_bucket_name
-      SNS_TOPIC_ARN           = var.sns_topic_arn
-      ENVIRONMENT             = var.environment
-      MEMBER_ACCOUNT_IDS      = jsonencode(var.member_account_ids)
-      CROSS_ACCOUNT_ROLE_NAME = var.cross_account_role_name
-      LOG_LEVEL               = var.log_level
+      UNUSED_THRESHOLD_DAYS     = tostring(var.unused_threshold_days)
+      S3_BUCKET_NAME            = var.s3_bucket_name
+      SNS_TOPIC_ARN             = var.sns_topic_arn
+      ENVIRONMENT               = var.environment
+      SECURITY_ACCOUNT_ID       = var.security_account_id
+      WORKLOADS_ACCOUNT_ID      = var.dev_account_id
+      CROSS_ACCOUNT_ROLE_NAME   = var.cross_account_role_name
+      CROSS_ACCOUNT_EXTERNAL_ID = var.cross_account_external_id
+      LOG_LEVEL                 = var.log_level
     }
   }
 
@@ -172,7 +186,7 @@ resource "aws_lambda_function" "iam_auditor" {
 # CloudWatch Log Group with retention
 resource "aws_cloudwatch_log_group" "lambda_logs" {
   name              = "/aws/lambda/${aws_lambda_function.iam_auditor.function_name}"
-  retention_in_days = 30
+  retention_in_days = var.log_retention_days
 
   tags = var.tags
 }
@@ -195,9 +209,10 @@ resource "aws_cloudwatch_event_target" "lambda_target" {
   arn       = aws_lambda_function.iam_auditor.arn
 
   input = jsonencode({
-    report_type    = "full"
-    threshold_days = var.unused_threshold_days
+    report_type       = "full"
+    threshold_days    = var.unused_threshold_days
     send_notification = true
+    audit_accounts    = [var.security_account_id, var.dev_account_id]
   })
 }
 

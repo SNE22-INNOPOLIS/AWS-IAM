@@ -2,27 +2,66 @@
 # Example Terraform Variables - Copy to terraform.tfvars and customize
 # =============================================================================
 
-environment         = "lab"
-primary_region      = "us-east-1"
-additional_regions  = ["us-west-2"]
-security_account_id = "123456789012"  # Replace with your account ID
+# Your Security/Audit Account ID from Lab1
+security_account_id = "865147226759"  # Replace with actual Security Account ID
 
-# Uncomment for multi-account setup
-# member_account_ids      = ["234567890123", "345678901234"]
-# cross_account_role_name = "SecurityLabCrossAccountRole"
+# Your Workloads Account ID from Lab1
+dev_account_id = "418272768233"  # Replace with actual Workloads Account ID
 
-# Organization-level analyzer (requires AWS Organizations)
-enable_organization_analyzer = false
+# Cross-account role name (must match Lab1 configuration)
+cross_account_role_name = "CrossAccountAuditRole"
 
-# Audit settings
-unused_threshold_days      = 90
+# External ID for cross-account role (must match Lab1 configuration)
+cross_account_external_id = "security-lab-audit"
+
+# =============================================================================
+# Environment Configuration
+# =============================================================================
+
+environment    = "lab"
+primary_region = "us-east-1"
+
+# =============================================================================
+# Access Analyzer Configuration
+# =============================================================================
+
+enable_access_analyzer = true
+unused_threshold_days  = 90
+
+# =============================================================================
+# Lambda Configuration
+# =============================================================================
+
 lambda_schedule_expression = "rate(7 days)"
+lambda_timeout             = 900
+lambda_memory_size         = 512
 
-# Notifications
-notification_email = "security-team@example.com"
+# =============================================================================
+# Notification Configuration
+# =============================================================================
 
-# Test roles for demonstration
-test_roles_to_create = [
+# Email for audit notifications (leave empty to skip email subscription)
+notification_email = "olugbengasamsonidowu@gmail.com"
+
+# =============================================================================
+# S3 Configuration
+# =============================================================================
+
+# Leave empty for auto-generated bucket name
+s3_report_bucket_name = ""
+
+# Lifecycle configuration
+s3_lifecycle_ia_days         = 90
+s3_lifecycle_glacier_days    = 180
+s3_lifecycle_expiration_days = 365
+
+# =============================================================================
+# Test Resources
+# =============================================================================
+
+create_test_roles = true
+
+test_roles = [
   {
     name        = "TestRole-EC2Admin"
     description = "Test role with EC2 permissions - for audit demo"
@@ -40,7 +79,12 @@ test_roles_to_create = [
   }
 ]
 
+# =============================================================================
+# Additional Tags
+# =============================================================================
+
 tags = {
   Owner      = "SecurityTeam"
-  CostCenter = "Security-123"
+  CostCenter = "Security-Lab"
+  Lab        = "Lab2"
 }
