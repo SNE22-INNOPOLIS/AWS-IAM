@@ -18,7 +18,7 @@ A comprehensive Terraform-based security lab environment for identifying and ana
 
 ## 📁 Project Structure
 
-security-lab/
+Lab2/
 ├── terraform/
 │   ├── main.tf                 # Main configuration
 │   ├── variables.tf            # Input variables
