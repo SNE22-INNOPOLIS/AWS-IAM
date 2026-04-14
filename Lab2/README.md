@@ -11,10 +11,30 @@ A comprehensive Terraform-based security lab environment for identifying and ana
 
 ## 📋 Prerequisites
 
-- AWS CLI configured with appropriate credentials
-- Terraform >= 1.5.0
-- Python >= 3.9
-- AWS Account(s) with IAM administrative access
+1. **Lab1 Completion**: This lab builds on Lab1's infrastructure:
+   - S3 backend for Terraform state
+   - DynamoDB table for state locking
+   - AWS CLI profiles configured for both accounts
+
+2. **AWS CLI Profiles**: Configure two profiles:
+   ```bash
+   # ~/.aws/credentials
+   [security]
+   aws_access_key_id = YOUR_SECURITY_ACCOUNT_KEY
+   aws_secret_access_key = YOUR_SECURITY_ACCOUNT_SECRET
+
+   [dev]
+   aws_access_key_id = YOUR_DEV_ACCOUNT_KEY
+   aws_secret_access_key = YOUR_DEV_ACCOUNT_SECRET
+   ```
+
+3. Required IAM Permissions: The deploying user needs permissions for:
+- IAM (Access Analyzer, Roles, Policies)
+- Lambda
+- S3
+- CloudWatch Events/Logs
+- SNS (optional)
+
 
 ## 📁 Project Structure
 
@@ -58,30 +78,72 @@ vim terraform.tfvars
 terraform init
 
 # Review the plan
-terraform plan
+terraform plan -out=tfplan
 
 # Apply the configuration
-terraform apply
+terraform apply tfplan
+
+# Save plan output for PR
+terraform show -no-color tfplan > tfplan.txt
 ```
 
-### 3. Run Initial Audit
+### 3. Test the Lambda Functions
 
 ```bash
-# Via AWS CLI
+# Invoke Security account Lambda
 aws lambda invoke \
-    --function-name iam-permission-auditor-lab \
-    --payload '{"report_type": "full"}' \
-    --cli-binary-format raw-in-base64-out \
-    response.json
+  --function-name iam-audit-lambda-security \
+  --profile security \
+  --region us-east-1 \
+  /tmp/security-output.json
 
-# View results
-cat response.json | jq .
+cat /tmp/security-output.json | jq .
+
+# Invoke Dev account Lambda
+aws lambda invoke \
+  --function-name iam-audit-lambda-dev \
+  --profile dev \
+  --region us-east-1 \
+  /tmp/dev-output.json
+
+cat /tmp/dev-output.json | jq .
 ```
 
-### 4. Run Standalone Script
+### 4. View Reports in S3
+
+```bash
+# List reports
+aws s3 ls s3://iam-audit-reports-<account-id>/iam-audit-reports/ \
+  --profile security --recursive
+
+# Download latest report
+aws s3 cp s3://iam-audit-reports-<account-id>/iam-audit-reports/security/latest.json \
+  /tmp/latest.json --profile security
+
+cat /tmp/latest.json | jq .
+```
+
+
+### 5. Run the Audit Locally
 
 ```bash
 cd scripts/iam-audit
+
+# Install dependencies
 pip install -r requirements.txt
-python iam_audit_standalone.py --audit-all --threshold 90
+
+# Run against Security account
+python local_runner.py \
+  --profile security \
+  --threshold-days 90 \
+  --output /tmp/security-audit.json
+
+# Run against Dev account with role filter
+python local_runner.py \
+  --profile dev \
+  --role-filter iam-audit-test \
+  --output /tmp/dev-audit.json
+
+# Run unit tests
+python -m pytest test_lambda.py -v
 ```
