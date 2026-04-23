@@ -1,297 +1,314 @@
 # =============================================================================
-# Main Configuration - Multi-Account Security Lab
+# Main Terraform Configuration
+# IAM Access Analyzer & Unused Permission Audit
 # =============================================================================
 
-locals {
-  common_tags = merge(var.tags, {
-    SecurityLab = "true"
-    AuditScope  = "IAM-Permissions"
-    Lab         = "Lab2"
-  })
-
-  # S3 bucket name with account ID for uniqueness
-  report_bucket_name = var.s3_report_bucket_name != "" ? var.s3_report_bucket_name : "iam-audit-reports-${var.security_account_id}-${var.environment}"
-
-  # Account list for auditing
-  accounts_to_audit = [var.security_account_id, var.dev_account_id]
+# Get current account information
+data "aws_caller_identity" "security" {
+  provider = aws.security
 }
-
-# Data Sources
-
-data "aws_caller_identity" "security" {}
 
 data "aws_caller_identity" "dev" {
   provider = aws.dev
 }
 
-data "aws_region" "current" {}
+data "aws_region" "current" {
+  provider = aws.security
+}
 
-data "aws_partition" "current" {}
+# =============================================================================
+# S3 Bucket for IAM Audit Reports (Security Account)
+# =============================================================================
 
-# Validation - Ensure we're in the correct accounts
+module "iam_audit_reports_bucket" {
+  source = "./modules/s3-reports-bucket"
 
-resource "null_resource" "validate_security_account" {
-  lifecycle {
-    precondition {
-      condition     = data.aws_caller_identity.security.account_id == var.security_account_id
-      error_message = "The default provider must be configured for the Security Account (${var.security_account_id})"
-    }
+  providers = {
+    aws = aws.security
+  }
+
+  bucket_name         = "${var.project_name}-reports-${var.security_account_id}"
+  security_account_id = var.security_account_id
+  dev_account_id      = var.dev_account_id
+  environment         = var.environment
+
+  tags = {
+    Purpose = "IAM Audit Reports Storage"
   }
 }
 
 # =============================================================================
-# Access Analyzer - Security Account
+# IAM Access Analyzer - Security Account (Primary Region)
 # =============================================================================
 
-module "access_analyzer" {
-  source = "./modules/access-analyzer"
+module "access_analyzer_security_primary" {
+  source = "./modules/iam-access-analyzer"
 
-  analyzer_name                 = "security-lab-analyzer-${var.environment}"
-  analyzer_type                 = "ACCOUNT"
-  enable_unused_access_analyzer = true
-  unused_access_age             = var.unused_threshold_days
-  environment                   = var.environment
-  tags                          = local.common_tags
-}
+  providers = {
+    aws = aws.security
+  }
 
+  analyzer_name = "${var.project_name}-analyzer-security-${var.primary_region}"
+  analyzer_type = "ACCOUNT"
+  account_id    = var.security_account_id
+  environment   = var.environment
 
-# =============================================================================
-# S3 Bucket for Audit Reports - Security Account
-# =============================================================================
-
-resource "aws_s3_bucket" "audit_reports" {
-  bucket = local.report_bucket_name
-
-  tags = merge(local.common_tags, {
-    Name = "IAM Audit Reports"
-  })
-}
-
-resource "aws_s3_bucket_versioning" "audit_reports" {
-  bucket = aws_s3_bucket.audit_reports.id
-  versioning_configuration {
-    status = "Enabled"
+  tags = {
+    Account = "Security"
+    Region  = var.primary_region
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "audit_reports" {
-  bucket = aws_s3_bucket.audit_reports.id
+# IAM Access Analyzer - Security Account (Secondary Region)
+module "access_analyzer_security_secondary" {
+  source = "./modules/iam-access-analyzer"
 
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-    bucket_key_enabled = true
+  providers = {
+    aws = aws.security_uswest2
   }
-}
 
-resource "aws_s3_bucket_public_access_block" "audit_reports" {
-  bucket = aws_s3_bucket.audit_reports.id
+  analyzer_name = "${var.project_name}-analyzer-security-us-west-2"
+  analyzer_type = "ACCOUNT"
+  account_id    = var.security_account_id
+  environment   = var.environment
 
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_lifecycle_configuration" "audit_reports" {
-  bucket = aws_s3_bucket.audit_reports.id
-
-  rule {
-    id     = "archive-old-reports"
-    status = "Enabled"
-
-    filter {
-      prefix = "reports/"  # Empty prefix = applies to all objects
-    }
-
-    transition {
-      days          = var.s3_lifecycle_ia_days
-      storage_class = "STANDARD_IA"
-    }
-
-    transition {
-      days          = var.s3_lifecycle_glacier_days
-      storage_class = "GLACIER"
-    }
-
-    expiration {
-      days = var.s3_lifecycle_expiration_days
-    }
+  tags = {
+    Account = "Security"
+    Region  = "us-west-2"
   }
 }
 
 # =============================================================================
-# SNS Topic for Notifications
+# IAM Access Analyzer - Dev Account (Primary Region)
 # =============================================================================
 
-resource "aws_sns_topic" "audit_notifications" {
-  name = "iam-audit-notifications-${var.environment}"
+module "access_analyzer_dev_primary" {
+  source = "./modules/iam-access-analyzer"
 
-  tags = local.common_tags
+  providers = {
+    aws = aws.dev
+  }
+
+  analyzer_name = "${var.project_name}-analyzer-dev-${var.primary_region}"
+  analyzer_type = "ACCOUNT"
+  account_id    = var.dev_account_id
+  environment   = var.environment
+
+  tags = {
+    Account = "Dev"
+    Region  = var.primary_region
+  }
 }
 
-resource "aws_sns_topic_subscription" "email" {
-  count = var.notification_email != "" ? 1 : 0
+# IAM Access Analyzer - Dev Account (Secondary Region)
+module "access_analyzer_dev_secondary" {
+  source = "./modules/iam-access-analyzer"
 
-  topic_arn = aws_sns_topic.audit_notifications.arn
+  providers = {
+    aws = aws.dev_uswest2
+  }
+
+  analyzer_name = "${var.project_name}-analyzer-dev-us-west-2"
+  analyzer_type = "ACCOUNT"
+  account_id    = var.dev_account_id
+  environment   = var.environment
+
+  tags = {
+    Account = "Dev"
+    Region  = "us-west-2"
+  }
+}
+
+# =============================================================================
+# SNS Topic for Notifications (Security Account) - Create before Lambda
+# =============================================================================
+
+resource "aws_sns_topic" "iam_audit_notifications" {
+  count    = var.enable_sns_notifications ? 1 : 0
+  provider = aws.security
+
+  name = "${var.project_name}-notifications"
+
+  tags = {
+    Purpose = "IAM Audit Notifications"
+  }
+}
+
+resource "aws_sns_topic_subscription" "email_subscription" {
+  count    = var.enable_sns_notifications && var.notification_email != "" ? 1 : 0
+  provider = aws.security
+
+  topic_arn = aws_sns_topic.iam_audit_notifications[0].arn
   protocol  = "email"
   endpoint  = var.notification_email
 }
 
-resource "aws_sns_topic_policy" "audit_notifications" {
-  arn = aws_sns_topic.audit_notifications.arn
+# SNS Topic Policy to allow cross-account publishing
+resource "aws_sns_topic_policy" "iam_audit_notifications_policy" {
+  count    = var.enable_sns_notifications ? 1 : 0
+  provider = aws.security
+
+  arn = aws_sns_topic.iam_audit_notifications[0].arn
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "AllowLambdaPublish"
+        Sid    = "AllowCrossAccountPublish"
         Effect = "Allow"
         Principal = {
-          Service = "lambda.amazonaws.com"
+          AWS = [
+            "arn:aws:iam::${var.security_account_id}:root",
+            "arn:aws:iam::${var.dev_account_id}:root"
+          ]
         }
         Action   = "sns:Publish"
-        Resource = aws_sns_topic.audit_notifications.arn
-        Condition = {
-          ArnLike = {
-            "aws:SourceArn" = "arn:${data.aws_partition.current.partition}:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.security.account_id}:function:*"
-          }
-        }
+        Resource = aws_sns_topic.iam_audit_notifications[0].arn
       }
     ]
   })
 }
 
 # =============================================================================
-# IAM Audit Lambda Module
+# IAM Audit Lambda - Security Account
 # =============================================================================
 
-module "iam_audit_lambda" {
+module "iam_audit_lambda_security" {
   source = "./modules/iam-audit-lambda"
 
-  function_name             = "iam-permission-auditor-${var.environment}"
-  environment               = var.environment
-  unused_threshold_days     = var.unused_threshold_days
-  s3_bucket_name            = aws_s3_bucket.audit_reports.id
-  sns_topic_arn             = aws_sns_topic.audit_notifications.arn
-  schedule_expression       = var.lambda_schedule_expression
-  lambda_timeout            = var.lambda_timeout
-  lambda_memory_size        = var.lambda_memory_size
-  
-  # Cross-account configuration (from Lab1)
-  security_account_id       = var.security_account_id
-  dev_account_id      = var.dev_account_id
-  cross_account_role_name   = var.cross_account_role_name
-  cross_account_external_id = var.cross_account_external_id
-  tags                    = local.common_tags
+  providers = {
+    aws = aws.security
+  }
 
-  depends_on = [
-    aws_s3_bucket.audit_reports
-  ]
+  function_name              = "${var.project_name}-lambda-security"
+  account_id                 = var.security_account_id
+  account_name               = "security"
+  reports_bucket_name        = module.iam_audit_reports_bucket.bucket_name
+  reports_bucket_arn         = module.iam_audit_reports_bucket.bucket_arn
+  unused_threshold_days      = var.unused_permission_threshold_days
+  enable_scheduled_execution = var.enable_scheduled_execution
+  schedule_expression        = var.lambda_schedule_expression
+  enable_sns_notifications   = var.enable_sns_notifications
+  notification_email         = var.notification_email
+  sns_topic_arn              = var.enable_sns_notifications ? aws_sns_topic.iam_audit_notifications[0].arn : ""
+  environment                = var.environment
+
+  tags = {
+    Account = "Security"
+  }
+
+  depends_on = [module.iam_audit_reports_bucket]
 }
 
 # =============================================================================
-# Test IAM Roles for Demonstration
+# IAM Audit Lambda - Dev Account
 # =============================================================================
 
-resource "aws_iam_role" "test_roles" {
-  for_each = var.create_test_roles ? { for role in var.test_roles : role.name => role } : {}
+module "iam_audit_lambda_dev" {
+  source = "./modules/iam-audit-lambda"
 
-  name        = each.value.name
-  description = each.value.description
+  providers = {
+    aws = aws.dev
+  }
+
+  function_name              = "${var.project_name}-lambda-dev"
+  account_id                 = var.dev_account_id
+  account_name               = "dev"
+  reports_bucket_name        = module.iam_audit_reports_bucket.bucket_name
+  reports_bucket_arn         = module.iam_audit_reports_bucket.bucket_arn
+  unused_threshold_days      = var.unused_permission_threshold_days
+  enable_scheduled_execution = var.enable_scheduled_execution
+  schedule_expression        = var.lambda_schedule_expression
+  enable_sns_notifications   = var.enable_sns_notifications
+  notification_email         = var.notification_email
+  sns_topic_arn              = var.enable_sns_notifications ? aws_sns_topic.iam_audit_notifications[0].arn : ""
+  environment                = var.environment
+  cross_account_bucket       = true
+
+  tags = {
+    Account = "Dev"
+  }
+
+  depends_on = [module.iam_audit_reports_bucket]
+}
+
+# =============================================================================
+# Test IAM Roles (for acceptance criteria validation)
+# =============================================================================
+
+# Test Role in Security Account
+resource "aws_iam_role" "test_role_security" {
+  count    = var.create_test_roles ? 1 : 0
+  provider = aws.security
+
+  name = "iam-audit-test-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
+        Action = "sts:AssumeRole"
         Effect = "Allow"
         Principal = {
           Service = "ec2.amazonaws.com"
         }
-        Action = "sts:AssumeRole"
       }
     ]
   })
 
-  tags = merge(local.common_tags, {
+  tags = {
+    Purpose  = "IAM Audit Test Role"
     TestRole = "true"
-    Purpose  = "IAM-Audit-Demo"
-  })
+  }
 }
 
-# Attach managed policies to test roles for demonstration
-resource "aws_iam_role_policy_attachment" "test_role_readonly" {
-  for_each = var.create_test_roles ? { for role in var.test_roles : role.name => role } : {}
+resource "aws_iam_role_policy" "test_role_policy_security" {
+  count    = var.create_test_roles ? 1 : 0
+  provider = aws.security
 
-  role       = aws_iam_role.test_roles[each.key].name
-  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
-}
-
-# Custom policy for test roles with broader permissions (to demonstrate unused services)
-resource "aws_iam_role_policy" "test_role_custom" {
-  for_each = var.create_test_roles ? { for role in var.test_roles : role.name => role } : {}
-
-  name = "${each.value.name}-custom-policy"
-  role = aws_iam_role.test_roles[each.key].id
+  name = "test-policy-with-unused-permissions"
+  role = aws_iam_role.test_role_security[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "AllowSpecificServices"
-        Effect   = "Allow"
-        Action   = [for svc in each.value.services : "${svc}:*"]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-
-# =============================================================================
-# Cross-Account Role (to be deployed in member accounts)
-# =============================================================================
-
-resource "aws_iam_role_policy" "cross_account_iam_audit" {
-  provider = aws.dev
-
-  name = "IAMAuditPermissions-Lab2"
-  role = var.cross_account_role_name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "IAMAccessAdvisor"
+        Sid    = "UnusedS3Permissions"
         Effect = "Allow"
         Action = [
-          "iam:GenerateServiceLastAccessedDetails",
-          "iam:GetServiceLastAccessedDetails",
-          "iam:GetServiceLastAccessedDetailsWithEntities",
-          "iam:ListRoles",
-          "iam:ListUsers",
-          "iam:ListPolicies",
-          "iam:ListRolePolicies",
-          "iam:ListAttachedRolePolicies",
-          "iam:ListUserPolicies",
-          "iam:ListAttachedUserPolicies",
-          "iam:GetRole",
-          "iam:GetUser",
-          "iam:GetPolicy",
-          "iam:GetPolicyVersion",
-          "iam:GetRolePolicy",
-          "iam:GetUserPolicy"
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
         ]
         Resource = "*"
       },
       {
-        Sid    = "AccessAnalyzerRead"
+        Sid    = "UnusedEC2Permissions"
         Effect = "Allow"
         Action = [
-          "access-analyzer:ListAnalyzers",
-          "access-analyzer:ListFindings",
-          "access-analyzer:GetFinding"
+          "ec2:DescribeInstances",
+          "ec2:StartInstances",
+          "ec2:StopInstances"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "UnusedDynamoDBPermissions"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:Query"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "UnusedSQSPermissions"
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage",
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage"
         ]
         Resource = "*"
       }
@@ -299,59 +316,72 @@ resource "aws_iam_role_policy" "cross_account_iam_audit" {
   })
 }
 
-# =============================================================================
-# Test IAM Roles - Workloads Account (for demonstration)
-# =============================================================================
-
-resource "aws_iam_role" "workloads_test_roles" {
+# Test Role in Dev Account
+resource "aws_iam_role" "test_role_dev" {
+  count    = var.create_test_roles ? 1 : 0
   provider = aws.dev
-  for_each = var.create_test_roles ? { for role in var.test_roles : role.name => role } : {}
 
-  name        = "${each.value.name}-Workloads"
-  description = "${each.value.description} (Workloads Account)"
+  name = "iam-audit-test-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
+        Action = "sts:AssumeRole"
         Effect = "Allow"
         Principal = {
-          Service = "ec2.amazonaws.com"
+          Service = "lambda.amazonaws.com"
         }
-        Action = "sts:AssumeRole"
       }
     ]
   })
 
-  tags = merge(local.common_tags, {
+  tags = {
+    Purpose  = "IAM Audit Test Role"
     TestRole = "true"
-    Purpose  = "IAM-Audit-Demo"
-    Account  = "dev"
-  })
+  }
 }
 
-resource "aws_iam_role_policy_attachment" "workloads_test_role_readonly" {
+resource "aws_iam_role_policy" "test_role_policy_dev" {
+  count    = var.create_test_roles ? 1 : 0
   provider = aws.dev
-  for_each = var.create_test_roles ? { for role in var.test_roles : role.name => role } : {}
 
-  role       = aws_iam_role.workloads_test_roles[each.key].name
-  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
-}
-
-resource "aws_iam_role_policy" "workloads_test_role_custom" {
-  provider = aws.dev
-  for_each = var.create_test_roles ? { for role in var.test_roles : role.name => role } : {}
-
-  name = "${each.value.name}-custom-policy"
-  role = aws_iam_role.workloads_test_roles[each.key].id
+  name = "test-policy-with-unused-permissions"
+  role = aws_iam_role.test_role_dev[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "AllowSpecificServices"
-        Effect   = "Allow"
-        Action   = [for svc in each.value.services : "${svc}:*"]
+        Sid    = "UnusedLambdaPermissions"
+        Effect = "Allow"
+        Action = [
+          "lambda:InvokeFunction",
+          "lambda:GetFunction",
+          "lambda:ListFunctions"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "UnusedSNSPermissions"
+        Effect = "Allow"
+        Action = [
+          "sns:Publish",
+          "sns:Subscribe",
+          "sns:ListTopics"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "UnusedCloudWatchPermissions"
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData",
+          "cloudwatch:GetMetricData",
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
         Resource = "*"
       }
     ]

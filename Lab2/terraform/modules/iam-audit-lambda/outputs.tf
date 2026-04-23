@@ -1,28 +1,24 @@
-# =============================================================================
-# IAM Audit Lambda Module Outputs
-# =============================================================================
-
-output "function_arn" {
+output "lambda_arn" {
   description = "ARN of the Lambda function"
-  value       = aws_lambda_function.iam_auditor.arn
+  value       = aws_lambda_function.iam_audit.arn
 }
 
-output "function_name" {
+output "lambda_function_name" {
   description = "Name of the Lambda function"
-  value       = aws_lambda_function.iam_auditor.function_name
+  value       = aws_lambda_function.iam_audit.function_name
 }
 
-output "role_arn" {
+output "lambda_role_arn" {
   description = "ARN of the Lambda execution role"
   value       = aws_iam_role.lambda_role.arn
 }
 
-output "log_group_name" {
-  description = "Name of the CloudWatch Log Group"
-  value       = aws_cloudwatch_log_group.lambda_logs.name
+output "lambda_invoke_arn" {
+  description = "Invoke ARN of the Lambda function"
+  value       = aws_lambda_function.iam_audit.invoke_arn
 }
 
-output "schedule_rule_arn" {
-  description = "ARN of the CloudWatch Events rule"
-  value       = aws_cloudwatch_event_rule.scheduled_audit.arn
+output "cloudwatch_log_group_name" {
+  description = "Name of the CloudWatch log group"
+  value       = aws_cloudwatch_log_group.lambda_logs.name
 }

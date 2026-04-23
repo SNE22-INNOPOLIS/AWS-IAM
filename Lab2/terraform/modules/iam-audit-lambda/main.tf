@@ -15,14 +15,9 @@ terraform {
   }
 }
 
-data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
-data "aws_partition" "current" {}
 
-# =============================================================================
-# Lambda IAM Role
-# =============================================================================
-
+# Lambda execution role
 resource "aws_iam_role" "lambda_role" {
   name = "${var.function_name}-role"
 
@@ -30,19 +25,21 @@ resource "aws_iam_role" "lambda_role" {
     Version = "2012-10-17"
     Statement = [
       {
+        Action = "sts:AssumeRole"
         Effect = "Allow"
         Principal = {
           Service = "lambda.amazonaws.com"
         }
-        Action = "sts:AssumeRole"
       }
     ]
   })
 
-  tags = var.tags
+  tags = merge(var.tags, {
+    Name = "${var.function_name}-role"
+  })
 }
 
-# IAM Policy for Lambda
+# IAM policy for Lambda
 resource "aws_iam_role_policy" "lambda_policy" {
   name = "${var.function_name}-policy"
   role = aws_iam_role.lambda_role.id
@@ -51,175 +48,155 @@ resource "aws_iam_role_policy" "lambda_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "CloudWatchLogs"
+        Sid    = "IAMReadAccess"
+        Effect = "Allow"
+        Action = [
+          "iam:ListRoles",
+          "iam:ListUsers",
+          "iam:GetRole",
+          "iam:GetUser",
+          "iam:ListRolePolicies",
+          "iam:ListUserPolicies",
+          "iam:ListAttachedRolePolicies",
+          "iam:ListAttachedUserPolicies",
+          "iam:GetRolePolicy",
+          "iam:GetUserPolicy",
+          "iam:GetPolicy",
+          "iam:GetPolicyVersion",
+          "iam:GenerateServiceLastAccessedDetails",
+          "iam:GetServiceLastAccessedDetails"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "AccessAnalyzerAccess"
+        Effect = "Allow"
+        Action = [
+          "access-analyzer:ListAnalyzers",
+          "access-analyzer:ListFindings",
+          "access-analyzer:GetFinding"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "S3WriteAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject"
+        ]
+        Resource = "${var.reports_bucket_arn}/iam-audit-reports/${var.account_name}/*"
+      },
+      {
+        Sid    = "CloudWatchLogsAccess"
         Effect = "Allow"
         Action = [
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:*"
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${var.account_id}:log-group:/aws/lambda/${var.function_name}:*"
       },
       {
-        Sid    = "IAMReadAccessSecurityAccount"
-        Effect = "Allow"
-        Action = [
-          "iam:GenerateServiceLastAccessedDetails",
-          "iam:GetServiceLastAccessedDetails",
-          "iam:GetServiceLastAccessedDetailsWithEntities",
-          "iam:ListRoles",
-          "iam:ListUsers",
-          "iam:ListPolicies",
-          "iam:ListRolePolicies",
-          "iam:ListAttachedRolePolicies",
-          "iam:ListUserPolicies",
-          "iam:ListAttachedUserPolicies",
-          "iam:GetRole",
-          "iam:GetUser",
-          "iam:GetPolicy",
-          "iam:GetPolicyVersion",
-          "iam:GetRolePolicy",
-          "iam:GetUserPolicy"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "AccessAnalyzerRead"
-        Effect = "Allow"
-        Action = [
-          "access-analyzer:ListAnalyzers",
-          "access-analyzer:ListFindings",
-          "access-analyzer:GetFinding",
-          "access-analyzer:ListAccessPreviews",
-          "access-analyzer:GetAccessPreview"
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "S3WriteReports"
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:PutObjectAcl",
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          "arn:${data.aws_partition.current.partition}:s3:::${var.s3_bucket_name}",
-          "arn:${data.aws_partition.current.partition}:s3:::${var.s3_bucket_name}/*"
-        ]
-      },
-      {
-        Sid    = "SNSPublish"
+        Sid    = "SNSPublishAccess"
         Effect = "Allow"
         Action = [
           "sns:Publish"
         ]
-        Resource = var.sns_topic_arn
-      },
-      {
-        Sid    = "CrossAccountAssumeWorkloads"
-        Effect = "Allow"
-        Action = "sts:AssumeRole"
-        Resource = "arn:${data.aws_partition.current.partition}:iam::${var.dev_account_id}:role/${var.cross_account_role_name}"
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "aws:ResourceTag/Purpose" = "IAM Audit Notifications"
+          }
+        }
       }
     ]
   })
 }
 
-# =============================================================================
-# Lambda Function Package
-# =============================================================================
-
-data "archive_file" "lambda_package" {
-  type        = "zip"
-  source_dir  = "${path.module}/../../../scripts/iam-audit"
-  output_path = "${path.module}/lambda_package.zip"
-
-  excludes = [
-    "__pycache__",
-    "*.pyc",
-    ".pytest_cache",
-    "tests",
-    "README.md",
-    "iam_audit_standalone.py",
-    ".venv",
-    "venv"
-  ]
-}
-
-# =============================================================================
-# Lambda Function
-# =============================================================================
-
-resource "aws_lambda_function" "iam_auditor" {
-  function_name = var.function_name
-  description   = "Audits IAM permissions and identifies unused services across Security and Workloads accounts"
-
-  filename         = data.archive_file.lambda_package.output_path
-  source_code_hash = data.archive_file.lambda_package.output_base64sha256
-
-  handler     = "lambda_function.lambda_handler"
-  runtime     = "python3.11"
-  timeout     = var.lambda_timeout
-  memory_size = var.lambda_memory_size
-
-  role = aws_iam_role.lambda_role.arn
-
-  environment {
-    variables = {
-      UNUSED_THRESHOLD_DAYS     = tostring(var.unused_threshold_days)
-      S3_BUCKET_NAME            = var.s3_bucket_name
-      SNS_TOPIC_ARN             = var.sns_topic_arn
-      ENVIRONMENT               = var.environment
-      SECURITY_ACCOUNT_ID       = var.security_account_id
-      WORKLOADS_ACCOUNT_ID      = var.dev_account_id
-      CROSS_ACCOUNT_ROLE_NAME   = var.cross_account_role_name
-      CROSS_ACCOUNT_EXTERNAL_ID = var.cross_account_external_id
-      LOG_LEVEL                 = var.log_level
-    }
-  }
-
-  tags = var.tags
-}
-
-# CloudWatch Log Group with retention
+# CloudWatch Log Group
 resource "aws_cloudwatch_log_group" "lambda_logs" {
-  name              = "/aws/lambda/${aws_lambda_function.iam_auditor.function_name}"
-  retention_in_days = var.log_retention_days
+  name              = "/aws/lambda/${var.function_name}"
+  retention_in_days = 30
 
-  tags = var.tags
-}
-
-# =============================================================================
-# CloudWatch Event Rule for Scheduled Execution
-# =============================================================================
-
-resource "aws_cloudwatch_event_rule" "scheduled_audit" {
-  name                = "${var.function_name}-schedule"
-  description         = "Triggers IAM audit Lambda on schedule"
-  schedule_expression = var.schedule_expression
-
-  tags = var.tags
-}
-
-resource "aws_cloudwatch_event_target" "lambda_target" {
-  rule      = aws_cloudwatch_event_rule.scheduled_audit.name
-  target_id = "IAMAuditLambda"
-  arn       = aws_lambda_function.iam_auditor.arn
-
-  input = jsonencode({
-    report_type       = "full"
-    threshold_days    = var.unused_threshold_days
-    send_notification = true
-    audit_accounts    = [var.security_account_id, var.dev_account_id]
+  tags = merge(var.tags, {
+    Name = "${var.function_name}-logs"
   })
 }
 
-resource "aws_lambda_permission" "allow_cloudwatch" {
-  statement_id  = "AllowExecutionFromCloudWatch"
+# Package Lambda code
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/../../../scripts/iam-audit"
+  output_path = "${path.module}/lambda_function.zip"
+  excludes    = ["local_runner.py", "test_lambda.py", "__pycache__", "*.pyc", "requirements.txt"]
+}
+
+# Lambda function
+resource "aws_lambda_function" "iam_audit" {
+  filename         = data.archive_file.lambda_zip.output_path
+  function_name    = var.function_name
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_function.lambda_handler"
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  runtime          = "python3.11"
+  timeout          = 900  # 15 minutes max
+  memory_size      = 512
+
+  environment {
+    variables = {
+      REPORTS_BUCKET       = var.reports_bucket_name
+      ACCOUNT_NAME         = var.account_name
+      ACCOUNT_ID           = var.account_id
+      THRESHOLD_DAYS       = tostring(var.unused_threshold_days)
+      ENVIRONMENT          = var.environment
+      SNS_TOPIC_ARN        = var.sns_topic_arn
+      ENABLE_NOTIFICATIONS = tostring(var.enable_sns_notifications)
+    }
+  }
+
+  tags = merge(var.tags, {
+    Name = var.function_name
+  })
+
+  depends_on = [
+    aws_cloudwatch_log_group.lambda_logs,
+    aws_iam_role_policy.lambda_policy
+  ]
+}
+
+# EventBridge rule for scheduled execution
+resource "aws_cloudwatch_event_rule" "scheduled_audit" {
+  count = var.enable_scheduled_execution ? 1 : 0
+
+  name                = "${var.function_name}-schedule"
+  description         = "Scheduled execution of IAM audit Lambda"
+  schedule_expression = var.schedule_expression
+
+  tags = merge(var.tags, {
+    Name = "${var.function_name}-schedule"
+  })
+}
+
+resource "aws_cloudwatch_event_target" "lambda_target" {
+  count = var.enable_scheduled_execution ? 1 : 0
+
+  rule      = aws_cloudwatch_event_rule.scheduled_audit[0].name
+  target_id = "iam-audit-lambda"
+  arn       = aws_lambda_function.iam_audit.arn
+
+  input = jsonencode({
+    "source": "scheduled-event",
+    "detail-type": "Scheduled IAM Audit"
+  })
+}
+
+resource "aws_lambda_permission" "allow_eventbridge" {
+  count = var.enable_scheduled_execution ? 1 : 0
+
+  statement_id  = "AllowExecutionFromEventBridge"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.iam_auditor.function_name
+  function_name = aws_lambda_function.iam_audit.function_name
   principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.scheduled_audit.arn
+  source_arn    = aws_cloudwatch_event_rule.scheduled_audit[0].arn
 }

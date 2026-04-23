@@ -1,288 +1,186 @@
-#!/usr/bin/env python3
 """
-IAM Permission Auditor - Lambda Function
-=========================================
-Identifies unused IAM permissions by analyzing service last accessed data.
-Generates JSON reports of unused services per IAM role/user.
+IAM Audit Lambda Function
+Identifies unused permissions for IAM Roles and Users.
 
-This script is Lambda-ready and can also be run standalone.
+This Lambda queries iam:GenerateServiceLastAccessedDetails to identify
+IAM Roles/Users with services not accessed in the last N days (default: 90).
+
+Output: JSON report of "Unused Services per Role/User" stored in S3.
 """
 
 import json
-import logging
 import os
+import logging
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass, asdict
-from enum import Enum
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Any, Optional
 import boto3
-from botocore.exceptions import ClientError, BotoCoreError
+from botocore.exceptions import ClientError
 
-# =============================================================================
-# Configuration
-# =============================================================================
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
-
-LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
-UNUSED_THRESHOLD_DAYS = int(os.environ.get('UNUSED_THRESHOLD_DAYS', '90'))
-S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', '')
+# Environment variables
+REPORTS_BUCKET = os.environ.get('REPORTS_BUCKET', '')
+ACCOUNT_NAME = os.environ.get('ACCOUNT_NAME', 'unknown')
+ACCOUNT_ID = os.environ.get('ACCOUNT_ID', '')
+THRESHOLD_DAYS = int(os.environ.get('THRESHOLD_DAYS', '90'))
+ENVIRONMENT = os.environ.get('ENVIRONMENT', 'production')
 SNS_TOPIC_ARN = os.environ.get('SNS_TOPIC_ARN', '')
-ENVIRONMENT = os.environ.get('ENVIRONMENT', 'lab')
-
-# Account configuration (from Lab1)
-SECURITY_ACCOUNT_ID = os.environ.get('SECURITY_ACCOUNT_ID', '')
-WORKLOADS_ACCOUNT_ID = os.environ.get('WORKLOADS_ACCOUNT_ID', '')
-CROSS_ACCOUNT_ROLE_NAME = os.environ.get('CROSS_ACCOUNT_ROLE_NAME', 'CrossAccountAuditRole')
-CROSS_ACCOUNT_EXTERNAL_ID = os.environ.get('CROSS_ACCOUNT_EXTERNAL_ID', 'security-lab-audit')
-
-# Derived configuration
-ACCOUNTS_TO_AUDIT = [SECURITY_ACCOUNT_ID, WORKLOADS_ACCOUNT_ID] if WORKLOADS_ACCOUNT_ID else [SECURITY_ACCOUNT_ID]
+ENABLE_NOTIFICATIONS = os.environ.get('ENABLE_NOTIFICATIONS', 'false').lower() == 'true'
 
 
-# =============================================================================
-# Data Classes
-# =============================================================================
-
-class EntityType(Enum):
-    """IAM Entity Types"""
-    ROLE = "Role"
-    USER = "User"
+class IAMAuditException(Exception):
+    """Custom exception for IAM Audit errors."""
+    pass
 
 
-@dataclass
-class ServiceAccessInfo:
-    """Information about service access"""
-    service_name: str
-    service_namespace: str
-    last_accessed: Optional[str]
-    last_accessed_region: Optional[str]
-    days_since_access: Optional[int]
-    total_authenticated_entities: int
-    is_unused: bool
-
-
-@dataclass
-class EntityAuditResult:
-    """Audit result for an IAM entity"""
-    entity_type: str
-    entity_name: str
-    entity_arn: str
-    account_id: str
-    creation_date: str
-    total_services_granted: int
-    unused_services_count: int
-    used_services_count: int
-    unused_services: List[ServiceAccessInfo]
-    used_services: List[ServiceAccessInfo]
-    potential_policy_reduction_percent: float
-    audit_timestamp: str
-
-
-@dataclass
-class AuditReport:
-    """Complete audit report"""
-    report_id: str
-    generated_at: str
-    environment: str
-    threshold_days: int
-    accounts_analyzed: List[str]
-    summary: Dict[str, Any]
-    entities: List[EntityAuditResult]
-    recommendations: List[str]
-
-
-# =============================================================================
-# IAM Audit Class
-# =============================================================================
-
-class IAMPermissionAuditor:
+class IAMServiceAccessAuditor:
     """
-    Audits IAM permissions to identify unused services.
+    Audits IAM roles and users for unused service permissions.
     
-    Uses IAM's GenerateServiceLastAccessedDetails API to determine
-    which services have not been accessed within the threshold period.
+    Uses the IAM Service Last Accessed API to identify services
+    that have not been accessed within the threshold period.
     """
-
-    def __init__(
-        self,
-        session: Optional[boto3.Session] = None,
-        threshold_days: int = UNUSED_THRESHOLD_DAYS
-    ):
+    
+    def __init__(self, threshold_days: int = 90):
         """
         Initialize the auditor.
         
         Args:
-            session: Boto3 session (uses default if not provided)
-            threshold_days: Number of days to consider a service unused
+            threshold_days: Number of days to consider a service as unused
         """
-        self.session = session or boto3.Session()
-        self.iam_client = self.session.client('iam')
+        self.iam_client = boto3.client('iam')
         self.threshold_days = threshold_days
         self.threshold_date = datetime.now(timezone.utc) - timedelta(days=threshold_days)
         
-        # Get account info
-        sts_client = self.session.client('sts')
-        self.account_id = sts_client.get_caller_identity()['Account']
-        
-        logger.info(f"Initialized IAM Auditor for account {self.account_id}")
-        logger.info(f"Threshold: {threshold_days} days (services not accessed since {self.threshold_date.date()})")
-
-    def generate_service_last_accessed_details(self, arn: str) -> str:
+    def _wait_for_report(self, job_id: str, max_attempts: int = 30) -> Dict[str, Any]:
         """
-        Generate a report of service last accessed details for an IAM entity.
+        Wait for a service last accessed report to be generated.
         
         Args:
-            arn: ARN of the IAM role or user
+            job_id: The job ID from GenerateServiceLastAccessedDetails
+            max_attempts: Maximum number of polling attempts
             
         Returns:
-            Job ID for the generated report
-        """
-        try:
-            response = self.iam_client.generate_service_last_accessed_details(Arn=arn)
-            return response['JobId']
-        except ClientError as e:
-            logger.error(f"Failed to generate service last accessed details for {arn}: {e}")
-            raise
-
-    def get_service_last_accessed_details(
-        self,
-        job_id: str,
-        max_wait_seconds: int = 120
-    ) -> Dict[str, Any]:
-        """
-        Wait for and retrieve service last accessed details.
-        
-        Args:
-            job_id: Job ID from generate_service_last_accessed_details
-            max_wait_seconds: Maximum time to wait for job completion
+            The completed report details
             
-        Returns:
-            Service last accessed details
+        Raises:
+            IAMAuditException: If the report generation fails or times out
         """
-        start_time = time.time()
-        
-        while True:
+        for attempt in range(max_attempts):
             try:
                 response = self.iam_client.get_service_last_accessed_details(JobId=job_id)
-                job_status = response['JobStatus']
+                status = response.get('JobStatus')
                 
-                if job_status == 'COMPLETED':
+                if status == 'COMPLETED':
                     return response
-                elif job_status == 'FAILED':
-                    error_msg = response.get('Error', {}).get('Message', 'Unknown error')
-                    raise Exception(f"Job failed: {error_msg}")
-                
-                # Check timeout
-                if time.time() - start_time > max_wait_seconds:
-                    raise TimeoutError(f"Job {job_id} did not complete within {max_wait_seconds} seconds")
-                
-                # Wait before polling again
+                elif status == 'FAILED':
+                    error = response.get('Error', {})
+                    raise IAMAuditException(
+                        f"Report generation failed: {error.get('Message', 'Unknown error')}"
+                    )
+                    
+                # Still in progress, wait and retry
                 time.sleep(2)
                 
             except ClientError as e:
                 logger.error(f"Error getting service last accessed details: {e}")
-                raise
-
-    def analyze_entity_access(
-        self,
-        entity_arn: str,
+                raise IAMAuditException(f"Failed to get report: {str(e)}")
+                
+        raise IAMAuditException(f"Report generation timed out after {max_attempts} attempts")
+    
+    def _analyze_service_access(
+        self, 
+        entity_arn: str, 
         entity_name: str,
-        entity_type: EntityType,
-        creation_date: datetime
-    ) -> EntityAuditResult:
+        entity_type: str
+    ) -> Dict[str, Any]:
         """
-        Analyze service access for an IAM entity.
+        Analyze service access for an IAM entity (role or user).
         
         Args:
-            entity_arn: ARN of the entity
-            entity_name: Name of the entity
-            entity_type: Type of entity (Role or User)
-            creation_date: When the entity was created
+            entity_arn: ARN of the IAM entity
+            entity_name: Name of the IAM entity
+            entity_type: Type of entity ('Role' or 'User')
             
         Returns:
-            EntityAuditResult with analysis
+            Dictionary containing analysis results
         """
-        logger.info(f"Analyzing {entity_type.value}: {entity_name}")
+        result = {
+            'entity_arn': entity_arn,
+            'entity_name': entity_name,
+            'entity_type': entity_type,
+            'analysis_timestamp': datetime.now(timezone.utc).isoformat(),
+            'threshold_days': self.threshold_days,
+            'total_services_granted': 0,
+            'unused_services': [],
+            'used_services': [],
+            'never_accessed_services': [],
+            'error': None
+        }
         
-        # Generate and wait for service access report
-        job_id = self.generate_service_last_accessed_details(entity_arn)
-        details = self.get_service_last_accessed_details(job_id)
-        
-        services_last_accessed = details.get('ServicesLastAccessed', [])
-        
-        unused_services: List[ServiceAccessInfo] = []
-        used_services: List[ServiceAccessInfo] = []
-        
-        for service in services_last_accessed:
-            service_name = service.get('ServiceName', 'Unknown')
-            service_namespace = service.get('ServiceNamespace', 'unknown')
-            last_authenticated = service.get('LastAuthenticated')
-            last_authenticated_region = service.get('LastAuthenticatedRegion')
-            total_entities = service.get('TotalAuthenticatedEntities', 0)
-            
-            # Determine if service is unused
-            if last_authenticated:
-                last_accessed_dt = last_authenticated.replace(tzinfo=timezone.utc) if last_authenticated.tzinfo is None else last_authenticated
-                days_since = (datetime.now(timezone.utc) - last_accessed_dt).days
-                is_unused = days_since > self.threshold_days
-                last_accessed_str = last_accessed_dt.isoformat()
-            else:
-                # Service was never accessed
-                days_since = None
-                is_unused = True
-                last_accessed_str = None
-            
-            service_info = ServiceAccessInfo(
-                service_name=service_name,
-                service_namespace=service_namespace,
-                last_accessed=last_accessed_str,
-                last_accessed_region=last_authenticated_region,
-                days_since_access=days_since,
-                total_authenticated_entities=total_entities,
-                is_unused=is_unused
+        try:
+            # Generate the service last accessed report
+            generate_response = self.iam_client.generate_service_last_accessed_details(
+                Arn=entity_arn
             )
+            job_id = generate_response['JobId']
             
-            if is_unused:
-                unused_services.append(service_info)
-            else:
-                used_services.append(service_info)
-        
-        total_services = len(services_last_accessed)
-        unused_count = len(unused_services)
-        
-        # Calculate potential reduction
-        reduction_percent = (unused_count / total_services * 100) if total_services > 0 else 0
-        
-        return EntityAuditResult(
-            entity_type=entity_type.value,
-            entity_name=entity_name,
-            entity_arn=entity_arn,
-            account_id=self.account_id,
-            creation_date=creation_date.isoformat() if creation_date else None,
-            total_services_granted=total_services,
-            unused_services_count=unused_count,
-            used_services_count=len(used_services),
-            unused_services=[asdict(s) for s in unused_services],
-            used_services=[asdict(s) for s in used_services],
-            potential_policy_reduction_percent=round(reduction_percent, 2),
-            audit_timestamp=datetime.now(timezone.utc).isoformat()
-        )
-
-    def audit_all_roles(
-        self,
-        filter_pattern: Optional[str] = None,
-        exclude_service_roles: bool = True
-    ) -> List[EntityAuditResult]:
+            # Wait for and retrieve the report
+            report = self._wait_for_report(job_id)
+            
+            services_accessed = report.get('ServicesLastAccessed', [])
+            result['total_services_granted'] = len(services_accessed)
+            
+            for service in services_accessed:
+                service_name = service.get('ServiceName', 'Unknown')
+                service_namespace = service.get('ServiceNamespace', 'unknown')
+                last_accessed = service.get('LastAuthenticated')
+                
+                service_info = {
+                    'service_name': service_name,
+                    'service_namespace': service_namespace,
+                    'total_authenticated_entities': service.get('TotalAuthenticatedEntities', 0)
+                }
+                
+                if last_accessed:
+                    service_info['last_accessed'] = last_accessed.isoformat()
+                    service_info['days_since_access'] = (
+                        datetime.now(timezone.utc) - last_accessed
+                    ).days
+                    
+                    if last_accessed < self.threshold_date:
+                        service_info['status'] = 'UNUSED'
+                        result['unused_services'].append(service_info)
+                    else:
+                        service_info['status'] = 'USED'
+                        result['used_services'].append(service_info)
+                else:
+                    service_info['last_accessed'] = None
+                    service_info['days_since_access'] = None
+                    service_info['status'] = 'NEVER_ACCESSED'
+                    result['never_accessed_services'].append(service_info)
+                    
+        except IAMAuditException as e:
+            result['error'] = str(e)
+            logger.error(f"Error analyzing {entity_type} {entity_name}: {e}")
+        except ClientError as e:
+            result['error'] = str(e)
+            logger.error(f"AWS error analyzing {entity_type} {entity_name}: {e}")
+            
+        return result
+    
+    def audit_roles(self, role_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Audit all IAM roles in the account.
+        Audit all IAM roles for unused service permissions.
         
         Args:
-            filter_pattern: Optional pattern to filter role names
-            exclude_service_roles: Whether to exclude AWS service-linked roles
+            role_filter: Optional prefix to filter roles (e.g., 'iam-audit-test')
             
         Returns:
-            List of EntityAuditResult for each role
+            List of analysis results for each role
         """
         results = []
         paginator = self.iam_client.get_paginator('list_roles')
@@ -290,38 +188,38 @@ class IAMPermissionAuditor:
         for page in paginator.paginate():
             for role in page['Roles']:
                 role_name = role['RoleName']
-                role_arn = role['Arn']
-                creation_date = role['CreateDate']
                 
-                # Skip service-linked roles if requested
-                if exclude_service_roles and '/aws-service-role/' in role_arn:
-                    logger.debug(f"Skipping service-linked role: {role_name}")
+                # Skip AWS service-linked roles
+                if role.get('Path', '').startswith('/aws-service-role/'):
+                    logger.info(f"Skipping service-linked role: {role_name}")
                     continue
+                    
+                # Apply filter if specified
+                if role_filter and not role_name.startswith(role_filter):
+                    continue
+                    
+                logger.info(f"Analyzing role: {role_name}")
+                result = self._analyze_service_access(
+                    entity_arn=role['Arn'],
+                    entity_name=role_name,
+                    entity_type='Role'
+                )
+                results.append(result)
                 
-                # Apply filter if provided
-                if filter_pattern and filter_pattern.lower() not in role_name.lower():
-                    continue
+                # Rate limiting to avoid API throttling
+                time.sleep(0.5)
                 
-                try:
-                    result = self.analyze_entity_access(
-                        entity_arn=role_arn,
-                        entity_name=role_name,
-                        entity_type=EntityType.ROLE,
-                        creation_date=creation_date
-                    )
-                    results.append(result)
-                except Exception as e:
-                    logger.error(f"Failed to audit role {role_name}: {e}")
-                    continue
-        
         return results
-
-    def audit_all_users(self) -> List[EntityAuditResult]:
+    
+    def audit_users(self, user_filter: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Audit all IAM users in the account.
+        Audit all IAM users for unused service permissions.
         
+        Args:
+            user_filter: Optional prefix to filter users
+            
         Returns:
-            List of EntityAuditResult for each user
+            List of analysis results for each user
         """
         results = []
         paginator = self.iam_client.get_paginator('list_users')
@@ -329,422 +227,260 @@ class IAMPermissionAuditor:
         for page in paginator.paginate():
             for user in page['Users']:
                 user_name = user['UserName']
-                user_arn = user['Arn']
-                creation_date = user['CreateDate']
                 
-                try:
-                    result = self.analyze_entity_access(
-                        entity_arn=user_arn,
-                        entity_name=user_name,
-                        entity_type=EntityType.USER,
-                        creation_date=creation_date
-                    )
-                    results.append(result)
-                except Exception as e:
-                    logger.error(f"Failed to audit user {user_name}: {e}")
+                # Apply filter if specified
+                if user_filter and not user_name.startswith(user_filter):
                     continue
-        
+                    
+                logger.info(f"Analyzing user: {user_name}")
+                result = self._analyze_service_access(
+                    entity_arn=user['Arn'],
+                    entity_name=user_name,
+                    entity_type='User'
+                )
+                results.append(result)
+                
+                # Rate limiting
+                time.sleep(0.5)
+                
         return results
 
-    def audit_specific_entity(self, entity_arn: str) -> EntityAuditResult:
-        """
-        Audit a specific IAM entity by ARN.
-        
-        Args:
-            entity_arn: ARN of the role or user
-            
-        Returns:
-            EntityAuditResult for the entity
-        """
-        # Determine entity type from ARN
-        if ':role/' in entity_arn:
-            entity_type = EntityType.ROLE
-            entity_name = entity_arn.split(':role/')[-1]
-            response = self.iam_client.get_role(RoleName=entity_name)
-            creation_date = response['Role']['CreateDate']
-        elif ':user/' in entity_arn:
-            entity_type = EntityType.USER
-            entity_name = entity_arn.split(':user/')[-1]
-            response = self.iam_client.get_user(UserName=entity_name)
-            creation_date = response['User']['CreateDate']
-        else:
-            raise ValueError(f"Invalid entity ARN: {entity_arn}")
-        
-        return self.analyze_entity_access(
-            entity_arn=entity_arn,
-            entity_name=entity_name,
-            entity_type=entity_type,
-            creation_date=creation_date
-        )
 
-    def generate_report(
-        self,
-        entities: List[EntityAuditResult],
-        accounts_analyzed: Optional[List[str]] = None
-    ) -> AuditReport:
-        """
-        Generate a comprehensive audit report.
-        
-        Args:
-            entities: List of audited entities
-            accounts_analyzed: List of account IDs analyzed
-            
-        Returns:
-            AuditReport with summary and recommendations
-        """
-        report_id = f"iam-audit-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
-        
-        # Calculate summary statistics
-        total_entities = len(entities)
-        total_unused_services = sum(e.unused_services_count for e in entities)
-        total_services = sum(e.total_services_granted for e in entities)
-        
-        entities_with_unused = [e for e in entities if e.unused_services_count > 0]
-        avg_reduction = (
-            sum(e.potential_policy_reduction_percent for e in entities_with_unused) / 
-            len(entities_with_unused)
-        ) if entities_with_unused else 0
-        
-        # Top entities by unused permissions
-        top_unused = sorted(
-            entities,
-            key=lambda e: e.unused_services_count,
-            reverse=True
-        )[:10]
-        
-        summary = {
-            "total_entities_audited": total_entities,
-            "total_roles": len([e for e in entities if e.entity_type == "Role"]),
-            "total_users": len([e for e in entities if e.entity_type == "User"]),
-            "entities_with_unused_permissions": len(entities_with_unused),
-            "total_unused_services": total_unused_services,
-            "total_services_granted": total_services,
-            "average_potential_reduction_percent": round(avg_reduction, 2),
-            "top_10_by_unused_services": [
-                {
-                    "entity_name": e.entity_name,
-                    "entity_type": e.entity_type,
-                    "unused_count": e.unused_services_count,
-                    "reduction_percent": e.potential_policy_reduction_percent
-                }
-                for e in top_unused
-            ]
-        }
-        
-        # Generate recommendations
-        recommendations = self._generate_recommendations(entities, summary)
-        
-        return AuditReport(
-            report_id=report_id,
-            generated_at=datetime.now(timezone.utc).isoformat(),
-            environment=ENVIRONMENT,
-            threshold_days=self.threshold_days,
-            accounts_analyzed=accounts_analyzed or [self.account_id],
-            summary=summary,
-            entities=[asdict(e) for e in entities],
-            recommendations=recommendations
-        )
-
-    def _generate_recommendations(
-        self,
-        entities: List[EntityAuditResult],
-        summary: Dict[str, Any]
-    ) -> List[str]:
-        """Generate actionable recommendations based on audit results."""
-        recommendations = []
-        
-        # High-level recommendations
-        if summary["entities_with_unused_permissions"] > 0:
-            pct = (summary["entities_with_unused_permissions"] / 
-                   summary["total_entities_audited"] * 100)
-            recommendations.append(
-                f"PRIORITY: {summary['entities_with_unused_permissions']} entities "
-                f"({pct:.1f}%) have unused permissions. Review and right-size policies."
-            )
-        
-        if summary["average_potential_reduction_percent"] > 30:
-            recommendations.append(
-                f"HIGH IMPACT: Average potential policy reduction is "
-                f"{summary['average_potential_reduction_percent']:.1f}%. "
-                "Consider implementing least-privilege policies."
-            )
-        
-        # Specific entity recommendations
-        for entity in entities:
-            if entity.unused_services_count > 10:
-                recommendations.append(
-                    f"REVIEW: {entity.entity_type} '{entity.entity_name}' has "
-                    f"{entity.unused_services_count} unused service permissions. "
-                    "Consider creating a custom policy with only required services."
-                )
-        
-        # Never-accessed services
-        never_accessed_entities = [
-            e for e in entities 
-            if any(s.get('days_since_access') is None for s in e.unused_services)
-        ]
-        if never_accessed_entities:
-            recommendations.append(
-                f"INVESTIGATE: {len(never_accessed_entities)} entities have services "
-                "that were NEVER accessed. These may be candidates for immediate removal."
-            )
-        
-        if not recommendations:
-            recommendations.append(
-                "All entities appear to be using their granted permissions appropriately. "
-                "Continue monitoring for changes."
-            )
-        
-        return recommendations
-
-
-# =============================================================================
-# Report Storage and Notification
-# =============================================================================
-
-def save_report_to_s3(report: AuditReport, bucket_name: str) -> str:
+def generate_summary(role_results: List[Dict], user_results: List[Dict]) -> Dict[str, Any]:
     """
-    Save the audit report to S3.
+    Generate a summary of the audit results.
     
     Args:
-        report: The audit report to save
-        bucket_name: S3 bucket name
+        role_results: List of role analysis results
+        user_results: List of user analysis results
         
     Returns:
-        S3 URI of the saved report
+        Summary dictionary
+    """
+    total_roles = len(role_results)
+    total_users = len(user_results)
+    
+    roles_with_unused = sum(
+        1 for r in role_results 
+        if r.get('unused_services') or r.get('never_accessed_services')
+    )
+    users_with_unused = sum(
+        1 for u in user_results 
+        if u.get('unused_services') or u.get('never_accessed_services')
+    )
+    
+    total_unused_services = sum(
+        len(r.get('unused_services', [])) + len(r.get('never_accessed_services', []))
+        for r in role_results + user_results
+    )
+    
+    # Get top entities with most unused permissions
+    all_entities = role_results + user_results
+    sorted_entities = sorted(
+        all_entities,
+        key=lambda x: len(x.get('unused_services', [])) + len(x.get('never_accessed_services', [])),
+        reverse=True
+    )
+    
+    top_unused = [
+        {
+            'entity_name': e['entity_name'],
+            'entity_type': e['entity_type'],
+            'unused_count': len(e.get('unused_services', [])),
+            'never_accessed_count': len(e.get('never_accessed_services', []))
+        }
+        for e in sorted_entities[:10]
+        if e.get('unused_services') or e.get('never_accessed_services')
+    ]
+    
+    return {
+        'total_roles_audited': total_roles,
+        'total_users_audited': total_users,
+        'roles_with_unused_permissions': roles_with_unused,
+        'users_with_unused_permissions': users_with_unused,
+        'total_unused_service_permissions': total_unused_services,
+        'top_entities_with_unused_permissions': top_unused,
+        'recommendation': (
+            f"Found {total_unused_services} unused service permissions across "
+            f"{roles_with_unused} roles and {users_with_unused} users. "
+            "Consider reviewing and removing these permissions to follow "
+            "the principle of least privilege."
+        )
+    }
+
+
+def upload_report_to_s3(report: Dict[str, Any], bucket: str, key: str) -> str:
+    """
+    Upload the audit report to S3.
+    
+    Args:
+        report: The audit report dictionary
+        bucket: S3 bucket name
+        key: S3 object key
+        
+    Returns:
+        S3 URI of the uploaded report
     """
     s3_client = boto3.client('s3')
     
-    # Create report key with date partitioning
-    date_prefix = datetime.now(timezone.utc).strftime('%Y/%m/%d')
-    report_key = f"reports/{date_prefix}/{report.report_id}.json"
-    
-    # Convert report to JSON
-    report_json = json.dumps(asdict(report), indent=2, default=str)
-    
-    # Upload to S3
-    s3_client.put_object(
-        Bucket=bucket_name,
-        Key=report_key,
-        Body=report_json,
-        ContentType='application/json',
-        ServerSideEncryption='AES256'
-    )
-    
-    s3_uri = f"s3://{bucket_name}/{report_key}"
-    logger.info(f"Report saved to {s3_uri}")
-    
-    return s3_uri
+    try:
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(report, indent=2, default=str),
+            ContentType='application/json',
+            ServerSideEncryption='AES256'
+        )
+        s3_uri = f"s3://{bucket}/{key}"
+        logger.info(f"Report uploaded to {s3_uri}")
+        return s3_uri
+    except ClientError as e:
+        logger.error(f"Failed to upload report to S3: {e}")
+        raise
 
 
-def send_notification(report: AuditReport, topic_arn: str, s3_uri: str) -> None:
+def send_notification(topic_arn: str, subject: str, message: str):
     """
     Send SNS notification with audit summary.
     
     Args:
-        report: The audit report
         topic_arn: SNS topic ARN
-        s3_uri: S3 URI where report is stored
+        subject: Notification subject
+        message: Notification message
     """
+    if not topic_arn:
+        logger.info("SNS notifications disabled - no topic ARN provided")
+        return
+        
     sns_client = boto3.client('sns')
     
-    summary = report.summary
-    
-    message = f"""
-IAM Permission Audit Report - {report.environment.upper()}
-{'=' * 50}
+    try:
+        sns_client.publish(
+            TopicArn=topic_arn,
+            Subject=subject,
+            Message=message
+        )
+        logger.info(f"Notification sent to {topic_arn}")
+    except ClientError as e:
+        logger.warning(f"Failed to send SNS notification: {e}")
 
-Report ID: {report.report_id}
-Generated: {report.generated_at}
-Threshold: {report.threshold_days} days
-
-SUMMARY
--------
-• Entities Audited: {summary['total_entities_audited']}
-  - Roles: {summary['total_roles']}
-  - Users: {summary['total_users']}
-• Entities with Unused Permissions: {summary['entities_with_unused_permissions']}
-• Total Unused Services Found: {summary['total_unused_services']}
-• Average Potential Reduction: {summary['average_potential_reduction_percent']:.1f}%
-
-TOP 5 ENTITIES BY UNUSED PERMISSIONS
-------------------------------------
-"""
-    
-    for i, entity in enumerate(summary['top_10_by_unused_services'][:5], 1):
-        message += f"{i}. {entity['entity_name']} ({entity['entity_type']}): "
-        message += f"{entity['unused_count']} unused services "
-        message += f"({entity['reduction_percent']:.1f}% reduction potential)\n"
-    
-    message += f"""
-RECOMMENDATIONS
----------------
-"""
-    for rec in report.recommendations[:5]:
-        message += f"• {rec}\n"
-    
-    message += f"""
-Full report available at: {s3_uri}
-
----
-This is an automated message from the IAM Permission Auditor.
-Do NOT automatically remove permissions - review and test changes first.
-"""
-    
-    sns_client.publish(
-        TopicArn=topic_arn,
-        Subject=f"[{report.environment.upper()}] IAM Audit: {summary['entities_with_unused_permissions']} entities need review",
-        Message=message
-    )
-    
-    logger.info(f"Notification sent to {topic_arn}")
-
-
-# =============================================================================
-# Cross-Account Support
-# =============================================================================
-
-def get_cross_account_session(
-    account_id: str,
-    role_name: str = CROSS_ACCOUNT_ROLE_NAME,
-    external_id: str = CROSS_ACCOUNT_EXTERNAL_ID
-) -> boto3.Session:
-    """
-    Get a session for the Workloads account using Lab1 cross-account role.
-    """
-    sts_client = boto3.client('sts')
-    
-    role_arn = f"arn:aws:iam::{account_id}:role/{role_name}"
-    
-    logger.info(f"Assuming role {role_arn} for cross-account access")
-    
-    response = sts_client.assume_role(
-        RoleArn=role_arn,
-        RoleSessionName=f'IAMAudit-{datetime.now().strftime("%Y%m%d%H%M%S")}',
-        ExternalId=external_id
-    )
-    
-    credentials = response['Credentials']
-    
-    return boto3.Session(
-        aws_access_key_id=credentials['AccessKeyId'],
-        aws_secret_access_key=credentials['SecretAccessKey'],
-        aws_session_token=credentials['SessionToken']
-    )
-
-
-# =============================================================================
-# Lambda Handler
-# =============================================================================
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Lambda handler for IAM permission auditing.
-    Audits both Security Account and Workloads Account (from Lab1).
-    """
-    logger.info(f"Starting IAM audit with event: {json.dumps(event)}")
+    Lambda handler for IAM unused permission audit.
     
-    try:
-        # Parse event parameters
-        report_type = event.get('report_type', 'full')
-        threshold_days = event.get('threshold_days', UNUSED_THRESHOLD_DAYS)
-        entity_arn = event.get('entity_arn')
-        filter_pattern = event.get('filter_pattern')
-        send_notification_flag = event.get('send_notification', True)
+    Args:
+        event: Lambda event
+        context: Lambda context
         
-        # Use configured accounts from Lab1
-        accounts_to_audit = event.get('audit_accounts', ACCOUNTS_TO_AUDIT)
+    Returns:
+        Audit results summary
+    """
+    logger.info(f"Starting IAM audit for account: {ACCOUNT_NAME} ({ACCOUNT_ID})")
+    logger.info(f"Threshold: {THRESHOLD_DAYS} days")
+    
+    # Extract filters from event if provided
+    role_filter = event.get('role_filter')
+    user_filter = event.get('user_filter')
+    audit_users = event.get('audit_users', True)
+    audit_roles = event.get('audit_roles', True)
+    
+    # Initialize auditor
+    auditor = IAMServiceAccessAuditor(threshold_days=THRESHOLD_DAYS)
+    
+    # Perform audits
+    role_results = []
+    user_results = []
+    
+    if audit_roles:
+        logger.info("Starting role audit...")
+        role_results = auditor.audit_roles(role_filter=role_filter)
+        logger.info(f"Completed audit of {len(role_results)} roles")
         
-        all_entities = []
-        accounts_analyzed = []
-        
-        # =================================================================
-        # Audit Security Account (current account)
-        # =================================================================
-        logger.info(f"Auditing Security Account: {SECURITY_ACCOUNT_ID}")
-        auditor = IAMPermissionAuditor(threshold_days=threshold_days)
-        accounts_analyzed.append(auditor.account_id)
-        
-        if report_type == 'specific' and entity_arn:
-            result = auditor.audit_specific_entity(entity_arn)
-            all_entities.append(result)
-        elif report_type == 'roles_only':
-            all_entities.extend(auditor.audit_all_roles(filter_pattern=filter_pattern))
-        elif report_type == 'users_only':
-            all_entities.extend(auditor.audit_all_users())
-        else:
-            all_entities.extend(auditor.audit_all_roles(filter_pattern=filter_pattern))
-            all_entities.extend(auditor.audit_all_users())
-        
-        # =================================================================
-        # Audit Workloads Account (cross-account from Lab1)
-        # =================================================================
-        if WORKLOADS_ACCOUNT_ID and WORKLOADS_ACCOUNT_ID in accounts_to_audit:
-            try:
-                logger.info(f"Auditing Workloads Account: {WORKLOADS_ACCOUNT_ID}")
-                workloads_session = get_cross_account_session(
-                    account_id=WORKLOADS_ACCOUNT_ID,
-                    role_name=CROSS_ACCOUNT_ROLE_NAME,
-                    external_id=CROSS_ACCOUNT_EXTERNAL_ID
-                )
-                workloads_auditor = IAMPermissionAuditor(
-                    session=workloads_session,
-                    threshold_days=threshold_days
-                )
-                
-                if report_type != 'specific':
-                    all_entities.extend(workloads_auditor.audit_all_roles(filter_pattern=filter_pattern))
-                    all_entities.extend(workloads_auditor.audit_all_users())
-                
-                accounts_analyzed.append(WORKLOADS_ACCOUNT_ID)
-                
-            except Exception as e:
-                logger.error(f"Failed to audit Workloads Account {WORKLOADS_ACCOUNT_ID}: {e}")
-        
-        # Generate report
-        report = auditor.generate_report(all_entities, accounts_analyzed)
-        
-        # Save to S3 if configured
-        s3_uri = None
-        if S3_BUCKET_NAME:
-            s3_uri = save_report_to_s3(report, S3_BUCKET_NAME)
-        
-        # Send notification if configured
-        if send_notification_flag and SNS_TOPIC_ARN and s3_uri:
-            send_notification(report, SNS_TOPIC_ARN, s3_uri)
-        
-        return {
-            'statusCode': 200,
-            'body': {
-                'report_id': report.report_id,
-                'accounts_analyzed': accounts_analyzed,
-                'summary': report.summary,
-                's3_uri': s3_uri,
-                'recommendations': report.recommendations[:5]
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"Audit failed: {e}", exc_info=True)
-        return {
-            'statusCode': 500,
-            'body': {
-                'error': str(e)
-            }
-        }
-
-
-# =============================================================================
-# Main Entry Point (for local testing)
-# =============================================================================
-
-if __name__ == '__main__':
-    # Test event for local execution
-    test_event = {
-        'report_type': 'full',
-        'threshold_days': 90,
-        'send_notification': False
+    if audit_users:
+        logger.info("Starting user audit...")
+        user_results = auditor.audit_users(user_filter=user_filter)
+        logger.info(f"Completed audit of {len(user_results)} users")
+    
+    # Generate summary
+    summary = generate_summary(role_results, user_results)
+    
+    # Build complete report
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d_%H-%M-%S')
+    report = {
+        'report_metadata': {
+            'report_id': f"iam-audit-{ACCOUNT_NAME}-{timestamp}",
+            'account_id': ACCOUNT_ID,
+            'account_name': ACCOUNT_NAME,
+            'environment': ENVIRONMENT,
+            'generated_at': datetime.now(timezone.utc).isoformat(),
+            'threshold_days': THRESHOLD_DAYS,
+            'lambda_request_id': context.aws_request_id if context else 'local'
+        },
+        'summary': summary,
+        'role_details': role_results,
+        'user_details': user_results
     }
     
-    result = lambda_handler(test_event, None)
-    print(json.dumps(result, indent=2, default=str))
+    # Upload to S3 if bucket is configured
+    s3_uri = None
+    if REPORTS_BUCKET:
+        report_key = f"iam-audit-reports/{ACCOUNT_NAME}/{timestamp}/full-report.json"
+        s3_uri = upload_report_to_s3(report, REPORTS_BUCKET, report_key)
+        
+        # Also upload a summary report
+        summary_key = f"iam-audit-reports/{ACCOUNT_NAME}/{timestamp}/summary.json"
+        upload_report_to_s3(
+            {'report_metadata': report['report_metadata'], 'summary': summary},
+            REPORTS_BUCKET,
+            summary_key
+        )
+        
+        # Upload latest report reference
+        latest_key = f"iam-audit-reports/{ACCOUNT_NAME}/latest.json"
+        upload_report_to_s3(
+            {
+                'latest_report': report_key,
+                'latest_summary': summary_key,
+                'generated_at': report['report_metadata']['generated_at']
+            },
+            REPORTS_BUCKET,
+            latest_key
+        )
+    
+    # Send notification if enabled
+    if ENABLE_NOTIFICATIONS and SNS_TOPIC_ARN:
+        notification_message = (
+            f"IAM Audit Report - {ACCOUNT_NAME}\n\n"
+            f"Account ID: {ACCOUNT_ID}\n"
+            f"Threshold: {THRESHOLD_DAYS} days\n\n"
+            f"Summary:\n"
+            f"- Roles audited: {summary['total_roles_audited']}\n"
+            f"- Users audited: {summary['total_users_audited']}\n"
+            f"- Roles with unused permissions: {summary['roles_with_unused_permissions']}\n"
+            f"- Users with unused permissions: {summary['users_with_unused_permissions']}\n"
+            f"- Total unused service permissions: {summary['total_unused_service_permissions']}\n\n"
+        )
+        if s3_uri:
+            notification_message += f"Full report: {s3_uri}\n"
+            
+        send_notification(
+            SNS_TOPIC_ARN,
+            f"IAM Audit Report - {ACCOUNT_NAME}",
+            notification_message
+        )
+    
+    # Return response
+    response = {
+        'statusCode': 200,
+        'body': {
+            'message': 'IAM audit completed successfully',
+            'account': ACCOUNT_NAME,
+            'summary': summary,
+            'report_location': s3_uri
+        }
+    }
+    
+    logger.info(f"Audit complete. Summary: {json.dumps(summary, indent=2)}")
+    
+    return response
