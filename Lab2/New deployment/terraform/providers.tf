@@ -24,7 +24,7 @@ terraform {
   # Use the backend from Lab1
   backend "s3" {
     bucket         = "security-lab-tfstate-security-account"
-    key            = "security-lab/main/terraform.tfstate"
+    key            = "security-lab/lab2/terraform.tfstate"
     region         = "us-east-1"
     profile        = "security"
     encrypt        = true
