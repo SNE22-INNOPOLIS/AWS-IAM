@@ -1,0 +1,3 @@
+# Ignore generated zip files
+*.zip
+!.gitkeep
