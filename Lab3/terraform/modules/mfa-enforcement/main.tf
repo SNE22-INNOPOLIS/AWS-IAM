@@ -149,9 +149,7 @@ resource "aws_iam_policy" "self_manage_mfa" {
           "iam:CreateVirtualMFADevice",
           "iam:DeleteVirtualMFADevice"
         ]
-        Resource = "arn:aws:iam::${var.account_id}:mfa/
-$$
-{aws:username}"
+        Resource = "arn:aws:iam::${var.account_id}:mfa/$${aws:username}"
       },
       {
         Sid    = "AllowManageOwnUserMFA"
@@ -162,9 +160,7 @@ $$
           "iam:ListMFADevices",
           "iam:ResyncMFADevice"
         ]
-        Resource = "arn:aws:iam::${var.account_id}:user/
-$$
-{aws:username}"
+        Resource = "arn:aws:iam::${var.account_id}:user/$${aws:username}"
       },
       {
         Sid    = "DenyAllExceptListedIfNoMFA"
