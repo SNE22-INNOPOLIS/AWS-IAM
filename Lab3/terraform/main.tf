@@ -167,7 +167,10 @@ module "breakglass_security" {
   account_id       = var.security_account_id
   account_name     = "security"
   project_name     = var.project_name
-  breakglass_users = var.breakglass_users
+  existing_group_name    = var.security_breakglass_group_name 
+  cloudtrail_bucket_name = var.cloudtrail_bucket_name
+  sns_topic_arn    = aws_sns_topic.guardrail_alerts.arn
+  notification_email     = var.notification_email
   environment      = var.environment
 
   tags = {
@@ -190,8 +193,11 @@ module "breakglass_dev" {
   account_id       = var.dev_account_id
   account_name     = "dev"
   project_name     = var.project_name
-  breakglass_users = var.breakglass_users
+  existing_group_name    = var.dev_breakglass_group_name 
+  cloudtrail_bucket_name = var.cloudtrail_bucket_name
   cross_account_role_arn = module.breakglass_security.breakglass_role_arn
+  sns_topic_arn    = aws_sns_topic.guardrail_alerts.arn
+  notification_email     = var.notification_email
   environment      = var.environment
 
   tags = {

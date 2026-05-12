@@ -96,3 +96,20 @@ variable "create_test_roles" {
   type        = bool
   default     = true
 }
+
+variable "security_breakglass_group_name" {
+  description = "Existing IAM group name in Security account for Break Glass access"
+  type        = string
+  default     = ""
+}
+
+variable "dev_breakglass_group_name" {
+  description = "Existing IAM group name in Dev account for Break Glass access"
+  type        = string
+  default     = ""
+}
+
+variable "cloudtrail_bucket_name" {
+  description = "S3 bucket name for CloudTrail logs (from Lab 1)"
+  type        = string
+}
