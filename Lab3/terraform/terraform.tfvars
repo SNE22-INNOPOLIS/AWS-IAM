@@ -3,8 +3,8 @@
 # =============================================================================
 
 # AWS Account IDs
-security_account_id = "1111111111111111"
-dev_account_id      = "2222222222222222"
+security_account_id = "111111111111"
+dev_account_id      = "222222222222"
 
 # AWS CLI Profiles
 security_account_profile = "security"
@@ -18,16 +18,11 @@ project_name = "iam-guardrails"
 environment  = "security-lab"
 cloudtrail_bucket_name = "security-lab-central-cloudtrail-logs"
 
-# Break Glass Configuration
-breakglass_users = [
-   "arn:aws:iam::865147226759:user/rolly"
-]
-
 security_breakglass_group_name = "Administrators"
 dev_breakglass_group_name      = ""   
 
 # Notifications
-notification_email = "security.team@example.com"
+notification_email = "mailtosamsoni@gmail.com"
 
 # Guardrail Settings
 enable_auto_remediation = true

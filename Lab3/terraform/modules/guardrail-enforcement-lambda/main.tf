@@ -63,32 +63,12 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Resource = "*"
       },
       {
-        Sid    = "CloudWatchLogs"
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:aws:logs:${data.aws_region.current.name}:${var.account_id}:log-group:/aws/lambda/${var.project_name}-enforcement:*"
-      },
-      {
         Sid    = "SNSPublish"
         Effect = "Allow"
         Action = "sns:Publish"
         Resource = "*"
       }
     ]
-  })
-}
-
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "lambda_logs" {
-  name              = "/aws/lambda/${var.project_name}-enforcement"
-  retention_in_days = 30
-
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-enforcement-logs"
   })
 }
 
@@ -125,7 +105,6 @@ resource "aws_lambda_function" "enforcement" {
   })
 
   depends_on = [
-    aws_cloudwatch_log_group.lambda_logs,
     aws_iam_role_policy.lambda_policy
   ]
 }

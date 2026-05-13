@@ -88,16 +88,6 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Resource = "${var.reports_bucket_arn}/iam-audit-reports/${var.account_name}/*"
       },
       {
-        Sid    = "CloudWatchLogsAccess"
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:aws:logs:${data.aws_region.current.name}:${var.account_id}:log-group:/aws/lambda/${var.function_name}:*"
-      },
-      {
         Sid    = "SNSPublishAccess"
         Effect = "Allow"
         Action = [
@@ -111,16 +101,6 @@ resource "aws_iam_role_policy" "lambda_policy" {
         }
       }
     ]
-  })
-}
-
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "lambda_logs" {
-  name              = "/aws/lambda/${var.function_name}"
-  retention_in_days = 30
-
-  tags = merge(var.tags, {
-    Name = "${var.function_name}-logs"
   })
 }
 
@@ -160,7 +140,6 @@ resource "aws_lambda_function" "iam_audit" {
   })
 
   depends_on = [
-    aws_cloudwatch_log_group.lambda_logs,
     aws_iam_role_policy.lambda_policy
   ]
 }

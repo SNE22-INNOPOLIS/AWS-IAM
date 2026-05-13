@@ -2,7 +2,6 @@
 # BreakGlass Module
 # - References existing IAM group
 # - Local SNS topic per account for reliable notifications
-# - CloudTrail -> CloudWatch Logs integration for metric filters
 # - EventBridge for real-time alerts on both success and failed attempts
 # =============================================================================
 
@@ -152,15 +151,6 @@ resource "aws_sns_topic_policy" "breakglass_alerts" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "AllowCloudWatchAlarms"
-        Effect = "Allow"
-        Principal = {
-          Service = "cloudwatch.amazonaws.com"
-        }
-        Action   = "sns:Publish"
-        Resource = aws_sns_topic.breakglass_alerts.arn
-      },
-      {
         Sid    = "AllowEventBridge"
         Effect = "Allow"
         Principal = {
@@ -183,65 +173,7 @@ resource "aws_sns_topic_policy" "breakglass_alerts" {
 }
 
 # =============================================================================
-# CloudWatch Log Group for CloudTrail
-# =============================================================================
-
-resource "aws_cloudwatch_log_group" "breakglass_cloudtrail" {
-  name              = "/aws/cloudtrail/${var.project_name}-${var.account_id}"
-  retention_in_days = 90
-
-  tags = merge(var.tags, {
-    Name    = "${var.project_name}-cloudtrail-logs"
-    Purpose = "BreakGlass CloudTrail Logs"
-  })
-}
-
-# =============================================================================
-# IAM Role: CloudTrail -> CloudWatch Logs
-# =============================================================================
-
-resource "aws_iam_role" "cloudtrail_to_cloudwatch" {
-  name = "${var.project_name}-cloudtrail-cw-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          Service = "cloudtrail.amazonaws.com"
-        }
-        Action = "sts:AssumeRole"
-      }
-    ]
-  })
-
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-cloudtrail-cw-role"
-  })
-}
-
-resource "aws_iam_role_policy" "cloudtrail_to_cloudwatch" {
-  name = "${var.project_name}-cloudtrail-cw-policy"
-  role = aws_iam_role.cloudtrail_to_cloudwatch.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "${aws_cloudwatch_log_group.breakglass_cloudtrail.arn}:*"
-      }
-    ]
-  })
-}
-
-# =============================================================================
-# CloudTrail with CloudWatch Logs Integration
+# CloudTrail Configuration
 # =============================================================================
 
 resource "aws_cloudtrail" "breakglass_trail" {
@@ -250,8 +182,6 @@ resource "aws_cloudtrail" "breakglass_trail" {
   include_global_service_events = true
   is_multi_region_trail         = false
   enable_logging                = true
-  cloud_watch_logs_group_arn    = "${aws_cloudwatch_log_group.breakglass_cloudtrail.arn}:*"
-  cloud_watch_logs_role_arn     = aws_iam_role.cloudtrail_to_cloudwatch.arn
 
   event_selector {
     read_write_type           = "All"
@@ -262,95 +192,6 @@ resource "aws_cloudtrail" "breakglass_trail" {
     Name    = "${var.project_name}-breakglass-trail"
     Purpose = "BreakGlass Monitoring"
   })
-
-  depends_on = [
-    aws_cloudwatch_log_group.breakglass_cloudtrail,
-    aws_iam_role_policy.cloudtrail_to_cloudwatch
-  ]
-}
-
-# =============================================================================
-# Metric Filter + Alarm: Successful Break Glass Assumption
-# =============================================================================
-
-resource "aws_cloudwatch_log_metric_filter" "breakglass_success" {
-  name           = "${var.project_name}-breakglass-success"
-  log_group_name = aws_cloudwatch_log_group.breakglass_cloudtrail.name
-  pattern        = "{ ($.eventName = \"AssumeRole\") && ($.requestParameters.roleArn = \"${aws_iam_role.breakglass.arn}\") && ($.errorCode NOT EXISTS) }"
-
-  metric_transformation {
-    name          = "BreakGlassSuccess"
-    namespace     = "SecurityMetrics/BreakGlass"
-    value         = "1"
-    default_value = "0"
-  }
-
-  depends_on = [
-    aws_cloudwatch_log_group.breakglass_cloudtrail,
-    aws_cloudtrail.breakglass_trail
-  ]
-}
-
-resource "aws_cloudwatch_metric_alarm" "breakglass_success" {
-  alarm_name          = "${var.project_name}-breakglass-success-alarm"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "BreakGlassSuccess"
-  namespace           = "SecurityMetrics/BreakGlass"
-  period              = 60
-  statistic           = "Sum"
-  threshold           = 0
-  alarm_description   = "ALERT: Break Glass role was successfully assumed in account ${var.account_id}"
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.breakglass_alerts.arn]
-
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-breakglass-success-alarm"
-  })
-
-  depends_on = [aws_sns_topic_policy.breakglass_alerts]
-}
-
-# =============================================================================
-# Metric Filter + Alarm: Failed Break Glass Assumption
-# =============================================================================
-
-resource "aws_cloudwatch_log_metric_filter" "breakglass_failed" {
-  name           = "${var.project_name}-breakglass-failed"
-  log_group_name = aws_cloudwatch_log_group.breakglass_cloudtrail.name
-  pattern        = "{ ($.eventName = \"AssumeRole\") && ($.errorCode = \"AccessDenied\") && ($.requestParameters.roleArn = \"${aws_iam_role.breakglass.arn}\") }"
-
-  metric_transformation {
-    name          = "BreakGlassFailed"
-    namespace     = "SecurityMetrics/BreakGlass"
-    value         = "1"
-    default_value = "0"
-  }
-
-  depends_on = [
-    aws_cloudwatch_log_group.breakglass_cloudtrail,
-    aws_cloudtrail.breakglass_trail
-  ]
-}
-
-resource "aws_cloudwatch_metric_alarm" "breakglass_failed" {
-  alarm_name          = "${var.project_name}-breakglass-failed-alarm"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "BreakGlassFailed"
-  namespace           = "SecurityMetrics/BreakGlass"
-  period              = 60
-  statistic           = "Sum"
-  threshold           = 0
-  alarm_description   = "ALERT: Unauthorized Break Glass role assumption attempt in account ${var.account_id}"
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.breakglass_alerts.arn]
-
-  tags = merge(var.tags, {
-    Name = "${var.project_name}-breakglass-failed-alarm"
-  })
-
-  depends_on = [aws_sns_topic_policy.breakglass_alerts]
 }
 
 # =============================================================================
@@ -459,22 +300,20 @@ resource "aws_cloudwatch_event_target" "breakglass_success_sns" {
 }
 
 # =============================================================================
-# EventBridge Rule: Real-Time Alert on Failed Assumption
+# EventBridge Rule: Real-Time Alert on Failed Assumption (API/CLI)
 # =============================================================================
 
 resource "aws_cloudwatch_event_rule" "breakglass_failed" {
   name        = "${var.project_name}-breakglass-failed"
-  description = "Real-time alert on failed Break Glass role assumption attempt"
+  description = "Real-time alert on failed Break Glass role assumption attempt (API/CLI)"
 
   event_pattern = jsonencode({
     source      = ["aws.sts"]
     detail-type = ["AWS API Call via CloudTrail"]
     detail = {
-      eventName = ["AssumeRole"]
-      errorCode = ["AccessDenied", "MFAMethodNotAllowed"]
-      requestParameters = {
-        roleArn = ["${aws_iam_role.breakglass.arn}"]
-      }
+      eventSource = ["sts.amazonaws.com"]
+      eventName   = ["AssumeRole"]
+      errorCode   = [{exists = true}]
     }
   })
 
@@ -514,6 +353,71 @@ resource "aws_cloudwatch_event_target" "breakglass_failed_sns" {
       "Error Detail: <errorMsg>"
       "------------------------------------------------"
       "ACTION REQUIRED: Investigate unauthorized Break Glass access attempt immediately."
+      "================================================"
+    EOF
+  }
+
+  depends_on = [
+    aws_sns_topic_policy.breakglass_alerts,
+    aws_iam_role_policy.eventbridge_sns
+  ]
+}
+
+# =============================================================================
+# EventBridge Rule: Real-Time Alert on Failed Console SwitchRole
+# =============================================================================
+
+resource "aws_cloudwatch_event_rule" "breakglass_failed_console" {
+  name        = "${var.project_name}-breakglass-failed-console"
+  description = "Real-time alert on failed Break Glass role switch attempt via AWS Console"
+
+  event_pattern = jsonencode({
+    source      = ["aws.signin"]
+    detail-type = ["AWS Console Sign In via CloudTrail"]
+    detail = {
+      eventSource = ["signin.amazonaws.com"]
+      eventName   = ["SwitchRole"]
+      errorMessage = [{exists = true}]
+      additionalEventData = {
+        SwitchTo = ["${aws_iam_role.breakglass.arn}*"]
+      }
+    }
+  })
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-breakglass-failed-console-rule"
+  })
+}
+
+resource "aws_cloudwatch_event_target" "breakglass_failed_console_sns" {
+  rule      = aws_cloudwatch_event_rule.breakglass_failed_console.name
+  target_id = "breakglass-failed-console-sns"
+  arn       = aws_sns_topic.breakglass_alerts.arn
+  role_arn  = aws_iam_role.eventbridge_sns.arn
+
+  input_transformer {
+    input_paths = {
+      account    = "$.account"
+      time       = "$.time"
+      user       = "$.detail.userIdentity.arn"
+      sourceIP   = "$.detail.sourceIPAddress"
+      region     = "$.region"
+      errorMsg   = "$.detail.errorMessage"
+      switchTo   = "$.detail.additionalEventData.SwitchTo"
+    }
+    input_template = <<-EOF
+      "================================================"
+      "SECURITY ALERT: Break Glass Console FAILED Attempt"
+      "================================================"
+      "Account        : <account>"
+      "Region         : <region>"
+      "Time           : <time>"
+      "User           : <user>"
+      "Source IP      : <sourceIP>"
+      "Attempted Role : <switchTo>"
+      "Error Message  : <errorMsg>"
+      "------------------------------------------------"
+      "ACTION REQUIRED: Investigate unauthorized Break Glass console access attempt immediately."
       "================================================"
     EOF
   }

@@ -371,18 +371,6 @@ resource "aws_iam_role_policy" "test_role_policy_dev" {
           "sns:ListTopics"
         ]
         Resource = "*"
-      },
-      {
-        Sid    = "UnusedCloudWatchPermissions"
-        Effect = "Allow"
-        Action = [
-          "cloudwatch:PutMetricData",
-          "cloudwatch:GetMetricData",
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "*"
       }
     ]
   })
