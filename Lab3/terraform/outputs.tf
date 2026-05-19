@@ -38,7 +38,7 @@ output "breakglass_role_dev_arn" {
 # Lambda Outputs
 output "guardrail_enforcement_lambda_arn" {
   description = "ARN of guardrail enforcement Lambda"
-  value       = module.guardrail_enforcement_lambda_dev.lambda_arn
+  value       = module.guardrails_dev.lambda_arn
 }
 
 # SNS Topic

@@ -104,37 +104,11 @@ module "mfa_enforcement_dev" {
 }
 
 # =============================================================================
-# LAB 3: Guardrail Enforcement Lambda - Dev Account
+# LAB 3: Guardrails - Dev Account
 # =============================================================================
 
-module "guardrail_enforcement_lambda_dev" {
-  source = "./modules/guardrail-enforcement-lambda"
-
-  providers = {
-    aws = aws.dev
-  }
-
-  account_id                = var.dev_account_id
-  account_name              = "dev"
-  project_name              = var.project_name
-  permission_boundary_arn   = module.permission_boundaries_dev.boundary_policy_arn
-  enable_auto_remediation   = var.enable_auto_remediation
-  notification_email        = var.notification_email
-  environment               = var.environment
-
-  tags = {
-    Account = "Dev"
-  }
-
-  depends_on = [module.permission_boundaries_dev]
-}
-
-# =============================================================================
-# LAB 3: Config Rules for Guardrails - Dev Account
-# =============================================================================
-
-module "config_rules_guardrails_dev" {
-  source = "./modules/config-rules-guardrails"
+module "guardrails_dev" {
+  source = "./modules/guardrails"
 
   providers = {
     aws = aws.dev
@@ -144,6 +118,9 @@ module "config_rules_guardrails_dev" {
   account_name            = "dev"
   project_name            = var.project_name
   permission_boundary_arn = module.permission_boundaries_dev.boundary_policy_arn
+  enable_auto_remediation = var.enable_auto_remediation
+  notification_email      = var.notification_email
+  sns_topic_arn           = aws_sns_topic.guardrail_alerts.arn
   environment             = var.environment
 
   tags = {
@@ -164,14 +141,14 @@ module "breakglass_security" {
     aws = aws.security
   }
 
-  account_id       = var.security_account_id
-  account_name     = "security"
-  project_name     = var.project_name
-  existing_group_name    = var.security_breakglass_group_name 
+  account_id             = var.security_account_id
+  account_name           = "security"
+  project_name           = var.project_name
+  existing_group_name    = var.security_breakglass_group_name
   cloudtrail_bucket_name = var.cloudtrail_bucket_name
-  sns_topic_arn    = aws_sns_topic.guardrail_alerts.arn
+  sns_topic_arn          = aws_sns_topic.guardrail_alerts.arn
   notification_email     = var.notification_email
-  environment      = var.environment
+  environment            = var.environment
 
   tags = {
     Account = "Security"
@@ -190,15 +167,15 @@ module "breakglass_dev" {
     aws = aws.dev
   }
 
-  account_id       = var.dev_account_id
-  account_name     = "dev"
-  project_name     = var.project_name
-  existing_group_name    = var.dev_breakglass_group_name 
+  account_id             = var.dev_account_id
+  account_name           = "dev"
+  project_name           = var.project_name
+  existing_group_name    = var.dev_breakglass_group_name
   cloudtrail_bucket_name = var.cloudtrail_bucket_name
   cross_account_role_arn = module.breakglass_security.breakglass_role_arn
-  sns_topic_arn    = aws_sns_topic.guardrail_alerts.arn
+  sns_topic_arn          = aws_sns_topic.guardrail_alerts.arn
   notification_email     = var.notification_email
-  environment      = var.environment
+  environment            = var.environment
 
   tags = {
     Account = "Dev"

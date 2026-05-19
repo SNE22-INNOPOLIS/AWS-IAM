@@ -3,8 +3,8 @@
 # =============================================================================
 
 # AWS Account IDs
-security_account_id = "111111111111"
-dev_account_id      = "222222222222"
+security_account_id = "865147226759"
+dev_account_id      = "418272768233"
 
 # AWS CLI Profiles
 security_account_profile = "security"
@@ -22,7 +22,7 @@ security_breakglass_group_name = "Administrators"
 dev_breakglass_group_name      = ""   
 
 # Notifications
-notification_email = "mailtosamsoni@gmail.com"
+notification_email = "rollymk22@outlook.com"
 
 # Guardrail Settings
 enable_auto_remediation = true
