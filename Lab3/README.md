@@ -23,7 +23,7 @@ This lab implements **preventative guardrails** at the AWS account level to stop
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Security Account                         │
-│                    (865147226759)                            │
+│                    (111111111111111)                            │
 │                                                             │
 │  ┌──────────────────────────────────────────────────────┐  │
 │  │  BreakGlass IAM Role + CloudTrail Trail              │  │
@@ -39,7 +39,7 @@ This lab implements **preventative guardrails** at the AWS account level to stop
               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                       Dev Account                            │
-│                    (418272768233)                            │
+│                    (222222222222222)                            │
 │                                                             │
 │  ┌──────────────────────┐   ┌──────────────────────────┐   │
 │  │  Permission Boundary │   │   BreakGlass IAM Role    │   │
@@ -123,8 +123,8 @@ An IAM role tagged `Purpose=BreakGlass` that bypasses all permission boundary De
 
 | Account | Role exists | Console Switch Role | Direct API/CLI assumption |
 |---|---|---|---|
-| Security (`865147226759`) | Yes | Yes — `Administrators` group has the assume policy; MFA required | Yes, with MFA |
-| Dev (`418272768233`) | Yes | No — no local group has the assume policy | Only via cross-account assumption from the Security account's Break Glass role |
+| Security (`111111111111111`) | Yes | Yes — `Administrators` group has the assume policy; MFA required | Yes, with MFA |
+| Dev (`222222222222222`) | Yes | No — no local group has the assume policy | Only via cross-account assumption from the Security account's Break Glass role |
 
 Dev account Break Glass access requires a two-hop chain: assume the Security Break Glass role first (with MFA), then assume the Dev Break Glass role from that session.
 
@@ -179,8 +179,8 @@ All environment-specific values are set in `terraform/terraform.tfvars`:
 
 | Variable | Description | Value |
 |---|---|---|
-| `security_account_id` | Security account AWS ID | `865147226759` |
-| `dev_account_id` | Dev account AWS ID | `418272768233` |
+| `security_account_id` | Security account AWS ID | `111111111111111` |
+| `dev_account_id` | Dev account AWS ID | `222222222222222` |
 | `security_account_profile` | AWS CLI profile for Security account | `security` |
 | `dev_account_profile` | AWS CLI profile for Dev account | `dev` |
 | `primary_region` | AWS region | `us-east-1` |
@@ -213,12 +213,12 @@ terraform apply tfplan
 On completion, Terraform prints the key output values:
 
 ```
-permission_boundary_security_arn    = "arn:aws:iam::865147226759:policy/iam-guardrails-permission-boundary"
-permission_boundary_dev_arn         = "arn:aws:iam::418272768233:policy/iam-guardrails-permission-boundary"
-breakglass_role_security_arn        = "arn:aws:iam::865147226759:role/iam-guardrails-breakglass-role"
-breakglass_role_dev_arn             = "arn:aws:iam::418272768233:role/iam-guardrails-breakglass-role"
-guardrail_enforcement_lambda_arn    = "arn:aws:lambda:us-east-1:418272768233:function:iam-guardrails-enforcement"
-guardrail_alerts_topic_arn          = "arn:aws:sns:us-east-1:865147226759:iam-guardrails-alerts"
+permission_boundary_security_arn    = "arn:aws:iam::111111111111111:policy/iam-guardrails-permission-boundary"
+permission_boundary_dev_arn         = "arn:aws:iam::222222222222222:policy/iam-guardrails-permission-boundary"
+breakglass_role_security_arn        = "arn:aws:iam::111111111111111:role/iam-guardrails-breakglass-role"
+breakglass_role_dev_arn             = "arn:aws:iam::222222222222222:role/iam-guardrails-breakglass-role"
+guardrail_enforcement_lambda_arn    = "arn:aws:lambda:us-east-1:222222222222222:function:iam-guardrails-enforcement"
+guardrail_alerts_topic_arn          = "arn:aws:sns:us-east-1:111111111111111:iam-guardrails-alerts"
 test_permission_boundary_command    = "aws iam create-user --user-name test-blocked-user --profile dev"
 assume_breakglass_role_command      = "aws sts assume-role --role-arn ... --role-session-name breakglass-session --profile security"
 ```
@@ -270,7 +270,7 @@ The same applies to `s3:DeleteBucket` and `rds:DeleteDBInstance`.
 ```bash
 # Step 1: Obtain an MFA session token from the Security account
 aws sts get-session-token \
-  --serial-number arn:aws:iam::865147226759:mfa/YOUR_USERNAME \
+  --serial-number arn:aws:iam::111111111111111:mfa/YOUR_USERNAME \
   --token-code 123456 \
   --profile security \
   --output json > /tmp/mfa-session.json
@@ -281,7 +281,7 @@ export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' /tmp/mfa-session.js
 
 # Step 2: Assume the Break Glass role in the Dev account
 aws sts assume-role \
-  --role-arn arn:aws:iam::418272768233:role/iam-guardrails-breakglass-role \
+  --role-arn arn:aws:iam::222222222222222:role/iam-guardrails-breakglass-role \
   --role-session-name test-breakglass \
   --output json > /tmp/breakglass-session.json
 
