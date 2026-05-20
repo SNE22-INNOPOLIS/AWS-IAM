@@ -27,7 +27,7 @@ All labs target a two-account AWS organisation structure:
 | Account | Purpose | AWS Account ID |
 |---------|---------|----------------|
 | Security | Central logging, Break Glass roles, SNS alerts, Terraform state | `1111111111111` |
-| Dev | Workload account — guardrails enforced, IAM audit targets | `222222222222` |
+| Dev | Workload account — guardrails enforced, IAM audit targets | `2222222222222` |
 
 AWS CLI profiles used throughout: `security` and `dev`.  
 Primary region: `us-east-1`.
