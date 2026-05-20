@@ -3,8 +3,8 @@
 # =============================================================================
 
 # AWS Account IDs
-security_account_id = "865147226759"
-dev_account_id      = "418272768233"
+security_account_id = "111111111111"
+dev_account_id      = "222222222222"
 
 # AWS CLI Profiles
 security_account_profile = "security"
