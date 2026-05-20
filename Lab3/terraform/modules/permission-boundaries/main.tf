@@ -122,6 +122,28 @@ resource "aws_iam_policy" "permission_boundary" {
             "aws:PrincipalTag/Purpose" = "BreakGlass"
           }
         }
+      },
+      {
+        # Deny the three key destructive actions unless MFA is present.
+        # BreakGlass principals (Purpose=BreakGlass tag) are exempt.
+        # BoolIfExists treats a missing MFA key (service contexts) as "false",
+        # so only explicit MFA=true sessions may perform these actions.
+        Sid    = "DenyDestructiveActionsWithoutMFA"
+        Effect = "Deny"
+        Action = [
+          "ec2:TerminateInstances",
+          "s3:DeleteBucket",
+          "rds:DeleteDBInstance"
+        ]
+        Resource = "*"
+        Condition = {
+          BoolIfExists = {
+            "aws:MultiFactorAuthPresent" = "false"
+          }
+          StringNotEquals = {
+            "aws:PrincipalTag/Purpose" = "BreakGlass"
+          }
+        }
       }
     ]
   })

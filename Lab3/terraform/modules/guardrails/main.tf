@@ -67,6 +67,16 @@ resource "aws_iam_role_policy" "lambda_policy" {
         Effect   = "Allow"
         Action   = "sns:Publish"
         Resource = "*"
+      },
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
       }
     ]
   })
@@ -172,7 +182,120 @@ resource "aws_lambda_permission" "allow_eventbridge_user" {
   source_arn    = aws_cloudwatch_event_rule.iam_user_created.arn
 }
 
+# =============================================================================
+# AWS Config Recorder & Delivery Channel
+# Required for any Config rule to evaluate resources.
+# =============================================================================
+
+resource "aws_s3_bucket" "config_bucket" {
+  bucket        = "${var.project_name}-config-${var.account_id}"
+  force_destroy = true
+
+  tags = merge(var.tags, {
+    Name        = "${var.project_name}-config-bucket"
+    Environment = var.environment
+  })
+}
+
+resource "aws_s3_bucket_public_access_block" "config_bucket" {
+  bucket                  = aws_s3_bucket.config_bucket.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_policy" "config_bucket" {
+  bucket = aws_s3_bucket.config_bucket.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowConfigGetAcl"
+        Effect = "Allow"
+        Principal = {
+          Service = "config.amazonaws.com"
+        }
+        Action   = "s3:GetBucketAcl"
+        Resource = aws_s3_bucket.config_bucket.arn
+      },
+      {
+        Sid    = "AllowConfigPutObject"
+        Effect = "Allow"
+        Principal = {
+          Service = "config.amazonaws.com"
+        }
+        Action   = "s3:PutObject"
+        Resource = "${aws_s3_bucket.config_bucket.arn}/AWSLogs/${var.account_id}/Config/*"
+        Condition = {
+          StringEquals = {
+            "s3:x-amz-acl" = "bucket-owner-full-control"
+          }
+        }
+      }
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.config_bucket]
+}
+
+resource "aws_iam_role" "config_recorder_role" {
+  name = "${var.project_name}-config-recorder-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "config.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-config-recorder-role"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "config_recorder_policy" {
+  role       = aws_iam_role.config_recorder_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWS_ConfigRole"
+}
+
+resource "aws_config_configuration_recorder" "recorder" {
+  name     = "${var.project_name}-recorder"
+  role_arn = aws_iam_role.config_recorder_role.arn
+
+  recording_group {
+    all_supported                 = true
+    include_global_resource_types = true
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.config_recorder_policy]
+}
+
+resource "aws_config_delivery_channel" "channel" {
+  name           = "${var.project_name}-channel"
+  s3_bucket_name = aws_s3_bucket.config_bucket.id
+
+  depends_on = [aws_config_configuration_recorder.recorder]
+}
+
+resource "aws_config_configuration_recorder_status" "recorder" {
+  name       = aws_config_configuration_recorder.recorder.name
+  is_enabled = true
+
+  depends_on = [aws_config_delivery_channel.channel]
+}
+
+# =============================================================================
 # Config Rules for non-compliant IAM resources
+# =============================================================================
+
 resource "aws_config_config_rule" "iam_role_permission_boundary" {
   name        = "${var.project_name}-iam-role-boundary-check"
   description = "Checks if IAM roles have the required permission boundary attached"
@@ -194,6 +317,8 @@ resource "aws_config_config_rule" "iam_role_permission_boundary" {
     Name        = "${var.project_name}-iam-role-boundary-check"
     Environment = var.environment
   })
+
+  depends_on = [aws_config_configuration_recorder_status.recorder]
 }
 
 # Lambda function for custom Config rule
@@ -302,6 +427,8 @@ resource "aws_config_config_rule" "iam_user_mfa_enabled" {
     Name        = "${var.project_name}-iam-user-mfa-enabled"
     Environment = var.environment
   })
+
+  depends_on = [aws_config_configuration_recorder_status.recorder]
 }
 
 resource "aws_config_config_rule" "root_mfa_enabled" {
@@ -317,6 +444,8 @@ resource "aws_config_config_rule" "root_mfa_enabled" {
     Name        = "${var.project_name}-root-mfa-enabled"
     Environment = var.environment
   })
+
+  depends_on = [aws_config_configuration_recorder_status.recorder]
 }
 
 resource "aws_config_config_rule" "iam_user_no_policies" {
@@ -332,6 +461,8 @@ resource "aws_config_config_rule" "iam_user_no_policies" {
     Name        = "${var.project_name}-iam-user-no-inline-policies"
     Environment = var.environment
   })
+
+  depends_on = [aws_config_configuration_recorder_status.recorder]
 }
 
 resource "aws_config_config_rule" "access_keys_rotated" {
@@ -351,6 +482,8 @@ resource "aws_config_config_rule" "access_keys_rotated" {
     Name        = "${var.project_name}-access-keys-rotated"
     Environment = var.environment
   })
+
+  depends_on = [aws_config_configuration_recorder_status.recorder]
 }
 
 resource "aws_config_config_rule" "iam_password_policy" {
@@ -376,4 +509,6 @@ resource "aws_config_config_rule" "iam_password_policy" {
     Name        = "${var.project_name}-iam-password-policy"
     Environment = var.environment
   })
+
+  depends_on = [aws_config_configuration_recorder_status.recorder]
 }

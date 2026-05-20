@@ -22,11 +22,10 @@ security_breakglass_group_name = "Administrators"
 dev_breakglass_group_name      = ""   
 
 # Notifications
-notification_email = "rollymk22@outlook.com"
+notification_email = "mailtosamsoni@gmail.com"
 
 # Guardrail Settings
 enable_auto_remediation = true
-protected_resources     = ["*"]
 
 # Lab 1 & 2 Settings (keep existing)
 unused_permission_threshold_days = 90

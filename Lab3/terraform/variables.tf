@@ -42,12 +42,6 @@ variable "environment" {
   default     = "security-lab"
 }
 
-variable "breakglass_users" {
-  description = "List of IAM user ARNs allowed to assume BreakGlass role"
-  type        = list(string)
-  default     = []
-}
-
 variable "notification_email" {
   description = "Email for guardrail violation alerts"
   type        = string
@@ -58,12 +52,6 @@ variable "enable_auto_remediation" {
   description = "Enable automatic attachment of permission boundaries"
   type        = bool
   default     = true
-}
-
-variable "protected_resources" {
-  description = "List of resource ARNs that require MFA for deletion"
-  type        = list(string)
-  default     = ["*"]
 }
 
 # Lab 1 & 2 variables (keep existing infrastructure)

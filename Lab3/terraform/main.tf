@@ -60,50 +60,6 @@ module "permission_boundaries_dev" {
 }
 
 # =============================================================================
-# LAB 3: MFA Enforcement Policy - Security Account
-# =============================================================================
-
-module "mfa_enforcement_security" {
-  source = "./modules/mfa-enforcement"
-
-  providers = {
-    aws = aws.security
-  }
-
-  account_id          = var.security_account_id
-  account_name        = "security"
-  project_name        = var.project_name
-  protected_resources = var.protected_resources
-  environment         = var.environment
-
-  tags = {
-    Account = "Security"
-  }
-}
-
-# =============================================================================
-# LAB 3: MFA Enforcement Policy - Dev Account
-# =============================================================================
-
-module "mfa_enforcement_dev" {
-  source = "./modules/mfa-enforcement"
-
-  providers = {
-    aws = aws.dev
-  }
-
-  account_id          = var.dev_account_id
-  account_name        = "dev"
-  project_name        = var.project_name
-  protected_resources = var.protected_resources
-  environment         = var.environment
-
-  tags = {
-    Account = "Dev"
-  }
-}
-
-# =============================================================================
 # LAB 3: Guardrails - Dev Account
 # =============================================================================
 

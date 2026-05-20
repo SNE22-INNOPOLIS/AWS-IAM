@@ -13,12 +13,6 @@ variable "project_name" {
   type        = string
 }
 
-variable "breakglass_users" {
-  description = "List of IAM user ARNs allowed to assume BreakGlass role"
-  type        = list(string)
-  default     = []
-}
-
 variable "cross_account_role_arn" {
   description = "ARN of cross-account BreakGlass role (for Dev account)"
   type        = string

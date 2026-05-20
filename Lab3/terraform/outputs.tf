@@ -13,17 +13,6 @@ output "permission_boundary_dev_arn" {
   value       = module.permission_boundaries_dev.boundary_policy_arn
 }
 
-# MFA Enforcement Policy Outputs
-output "mfa_enforcement_policy_security_arn" {
-  description = "ARN of MFA enforcement policy in Security account"
-  value       = module.mfa_enforcement_security.mfa_policy_arn
-}
-
-output "mfa_enforcement_policy_dev_arn" {
-  description = "ARN of MFA enforcement policy in Dev account"
-  value       = module.mfa_enforcement_dev.mfa_policy_arn
-}
-
 # BreakGlass Role Outputs
 output "breakglass_role_security_arn" {
   description = "ARN of BreakGlass role in Security account"
@@ -48,8 +37,9 @@ output "guardrail_alerts_topic_arn" {
 }
 
 # Test Commands
+
 output "test_permission_boundary_command" {
-  description = "Command to test permission boundary (should fail)"
+  description = "Command to test permission boundary (should fail with AccessDenied)"
   value       = "aws iam create-user --user-name test-blocked-user --profile dev"
 }
 

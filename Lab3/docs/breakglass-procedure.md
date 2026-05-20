@@ -1,373 +1,442 @@
-# Break Glass Procedure
+# Break Glass Emergency Access Procedure
 
-## Overview
+**Classification:** Internal — Security Operations  
+**Owner:** Security Team  
+**Last Reviewed:** 2026-05-20  
+**Accounts in Scope:** Security (`865147226759`) · Dev (`418272768233`)
 
-The Break Glass procedure provides emergency access to bypass guardrails when necessary. This should only be used in genuine emergencies when normal access is insufficient.
+> **WARNING:** Break Glass access grants full administrative privileges and bypasses all preventative guardrails. Every action is logged in CloudTrail and triggers an immediate SNS alert to the security team. Use only in genuine emergencies.
 
-## Prerequisites
+---
 
-1. MFA device configured for the user
-2. User is authorized for Break Glass access
-3. Incident ticket or documented emergency
+## Table of Contents
 
-## Procedure
+1. [Active Guardrails](#1-active-guardrails)
+2. [Prerequisites](#2-prerequisites)
+3. [Step 1 — Document the Emergency](#3-step-1--document-the-emergency)
+4. [Step 2 — Assume the Break Glass Role](#4-step-2--assume-the-break-glass-role)
+5. [Step 3 — Perform Emergency Actions](#5-step-3--perform-emergency-actions)
+6. [Step 4 — Exit the Break Glass Session](#6-step-4--exit-the-break-glass-session)
+7. [Step 5 — Post-Incident Documentation](#7-step-5--post-incident-documentation)
+8. [Monitoring and Alerts](#8-monitoring-and-alerts)
+9. [Cross-Account Access](#9-cross-account-access)
 
-### Step 1: Document the Emergency
+---
 
-Before using Break Glass access:
-- Create an incident ticket
-- Document the reason for emergency access
-- Get approval from security team (if time permits)
-- Note the start time
+## 1. Active Guardrails
 
-### Step 2: Assume the Break Glass Role
+The following preventative controls are enforced on every IAM principal in each account. Break Glass access is the **only** legitimate way to bypass them.
 
-#### Option A: AWS CLI
+| Guardrail | Enforced By | Break Glass Exemption |
+|---|---|---|
+| `ec2:TerminateInstances` requires MFA | Permission boundary — `DenyDestructiveActionsWithoutMFA` | Role carries `Purpose=BreakGlass` tag; Deny condition does not apply |
+| `s3:DeleteBucket` requires MFA | Permission boundary — `DenyDestructiveActionsWithoutMFA` | As above |
+| `rds:DeleteDBInstance` requires MFA | Permission boundary — `DenyDestructiveActionsWithoutMFA` | As above |
+| `iam:CreateUser` / `iam:CreateAccessKey` blocked | Permission boundary — `DenyCreateUserWithoutBreakGlassTag` | As above |
+| CloudTrail and Config cannot be disabled | Permission boundary Deny statements | As above |
+| New IAM roles automatically receive permission boundary | EventBridge → Lambda auto-remediation | Lambda exclusion list skips the Break Glass role |
+| Non-compliant IAM entities reported | AWS Config custom and managed rules | Config rules continue to run independently |
+
+### Why `iam:CreateUser` Returns AccessDenied
+
+Every IAM principal created in a guardrailed account receives the `iam-guardrails-permission-boundary` automatically within seconds of creation (attached by the enforcement Lambda). That boundary includes:
+
+```
+Deny  iam:CreateUser, iam:CreateAccessKey, iam:CreateLoginProfile
+  when  aws:PrincipalTag/Purpose != "BreakGlass"
+```
+
+A caller without the `Purpose=BreakGlass` tag attempting to create a user:
 
 ```bash
-# Replace with your actual values
-MFA_SERIAL="arn:aws:iam::ACCOUNT_ID:mfa/YOUR_USERNAME"
-MFA_CODE="123456"  # Your current MFA code
+aws iam create-user --user-name test-blocked-user --profile dev
+```
 
-# Get session token with MFA
+receives:
+
+```
+An error occurred (AccessDenied) when calling the CreateUser operation:
+User: arn:aws:iam::418272768233:user/... is not authorized to perform:
+iam:CreateUser because no identity-based policy allows the iam:CreateUser action.
+```
+
+The Break Glass role carries the tag `Purpose=BreakGlass`. Its sessions satisfy the `StringNotEquals` condition, so the Deny does not apply.
+
+---
+
+## 2. Prerequisites
+
+Before initiating a Break Glass session, confirm all of the following:
+
+- [ ] An MFA device is enrolled and accessible for your IAM user
+- [ ] Your IAM user has been granted Break Glass access by the Security team
+- [ ] An incident ticket has been raised (or is in progress)
+- [ ] You have documented the business justification for emergency access
+
+---
+
+## 3. Step 1 — Document the Emergency
+
+Complete the following **before** assuming the Break Glass role:
+
+| Field | Details |
+|---|---|
+| Incident Ticket | e.g. `INC-20240115-001` |
+| Justification | Brief description of the emergency |
+| Target Account | Security / Dev |
+| Approved By | Name of approving manager or security lead (if time permits) |
+| Session Start Time (UTC) | |
+
+> If the situation is too critical to obtain approval first, proceed and notify the security team immediately after assuming the role.
+
+---
+
+## 4. Step 2 — Assume the Break Glass Role
+
+### Option A — AWS CLI
+
+```bash
+# ── Configuration ────────────────────────────────────────────────────────────
+MFA_SERIAL="arn:aws:iam::ACCOUNT_ID:mfa/YOUR_USERNAME"
+MFA_CODE="123456"                          # 6-digit TOTP code
+BREAKGLASS_ROLE="arn:aws:iam::ACCOUNT_ID:role/iam-guardrails-breakglass-role"
+SESSION_NAME="breakglass-$(whoami)-$(date +%Y%m%d%H%M%S)"
+
+# ── Step 1: Obtain an MFA-authenticated session token ────────────────────────
 aws sts get-session-token \
-  --serial-number ${MFA_SERIAL} \
-  --token-code ${MFA_CODE} \
+  --serial-number "${MFA_SERIAL}" \
+  --token-code    "${MFA_CODE}" \
   --duration-seconds 3600 \
   --profile your-profile \
   --output json > /tmp/mfa-session.json
 
-# Export the temporary credentials
-export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' /tmp/mfa-session.json)
+export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId'     /tmp/mfa-session.json)
 export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' /tmp/mfa-session.json)
-export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' /tmp/mfa-session.json)
+export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken'    /tmp/mfa-session.json)
 
-# Replace ACCOUNT_ID with target account
-BREAKGLASS_ROLE="arn:aws:iam::ACCOUNT_ID:role/iam-guardrails-breakglass-role"
-SESSION_NAME="breakglass-$(whoami)-$(date +%Y%m%d%H%M%S)"
-
-# Assume the Break Glass role
+# ── Step 2: Assume the Break Glass role ──────────────────────────────────────
 aws sts assume-role \
-  --role-arn ${BREAKGLASS_ROLE} \
-  --role-session-name ${SESSION_NAME} \
+  --role-arn         "${BREAKGLASS_ROLE}" \
+  --role-session-name "${SESSION_NAME}" \
   --duration-seconds 3600 \
   --output json > /tmp/breakglass-session.json
 
-# Export the Break Glass credentials
-export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' /tmp/breakglass-session.json)
+export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId'     /tmp/breakglass-session.json)
 export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' /tmp/breakglass-session.json)
-export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' /tmp/breakglass-session.json)
+export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken'    /tmp/breakglass-session.json)
 
-# Verify you have Break Glass access
+# ── Step 3: Verify ───────────────────────────────────────────────────────────
 aws sts get-caller-identity
 ```
 
-Expected Output:
+**Expected output:**
 
-```bash
+```json
 {
-    "UserId": "AROA...:breakglass-johndoe-20240115143000",
-    "Account": "123456789012",
-    "Arn": "arn:aws:sts::123456789012:assumed-role/iam-guardrails-breakglass-role/breakglass-johndoe-20240115143000"
+    "UserId": "AROAEXAMPLEID:breakglass-johndoe-20240115143000",
+    "Account": "418272768233",
+    "Arn": "arn:aws:sts::418272768233:assumed-role/iam-guardrails-breakglass-role/breakglass-johndoe-20240115143000"
 }
 ```
 
-#### Option B: AWS Console
+---
 
-1. Sign in to AWS Console with MFA
-2. Navigate to IAM → Roles
-3. Search for `iam-guardrails-breakglass-role`
-4. Click Switch Role or use the role switcher in the top navigation
-5. Enter the account ID and role name
+### Option B — AWS Console
 
-#### Option C: Using a Break Glass Script
+1. Sign in to the AWS Console with your IAM user credentials and MFA.
+2. Click your account name in the top-right corner and select **Switch Role**.
+3. Enter the target **Account ID** and role name `iam-guardrails-breakglass-role`.
+4. Optionally provide a display name and colour for easy identification.
+5. Click **Switch Role**.
 
-Save this as `breakglass.sh`:
+---
+
+### Option C — Automated Script (`breakglass.sh`)
+
+Save the script below, make it executable, and run it. It handles MFA prompting, role assumption, and local audit logging.
 
 <details>
-<summary>breakglass.sh</summary>
+<summary>View breakglass.sh</summary>
 
 ```bash
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# Configuration
-SECURITY_ACCOUNT_ID="111111111111"
-DEV_ACCOUNT_ID="222222222222"
+# ── Account Configuration ────────────────────────────────────────────────────
+SECURITY_ACCOUNT_ID="865147226759"
+DEV_ACCOUNT_ID="418272768233"
 MFA_SERIAL="arn:aws:iam::${SECURITY_ACCOUNT_ID}:mfa/${USER}"
+ROLE_NAME="iam-guardrails-breakglass-role"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+# ── Terminal Colours ─────────────────────────────────────────────────────────
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
-echo -e "${RED}========================================${NC}"
-echo -e "${RED}  BREAK GLASS ACCESS - EMERGENCY ONLY  ${NC}"
-echo -e "${RED}========================================${NC}"
+echo -e "${RED}╔══════════════════════════════════════════╗${NC}"
+echo -e "${RED}║   BREAK GLASS ACCESS — EMERGENCY ONLY   ║${NC}"
+echo -e "${RED}╚══════════════════════════════════════════╝${NC}"
 echo ""
 
-# Prompt for confirmation
-read -p "Are you sure you need Break Glass access? (yes/no): " confirm
-if [ "$confirm" != "yes" ]; then
-    echo "Aborted."
-    exit 1
-fi
+# ── Confirmation ─────────────────────────────────────────────────────────────
+read -rp "Confirm this is a genuine emergency (yes/no): " confirm
+[[ "${confirm}" != "yes" ]] && echo "Aborted." && exit 1
 
-# Prompt for incident ticket
-read -p "Enter incident ticket number: " incident_ticket
-if [ -z "$incident_ticket" ]; then
-    echo -e "${RED}Error: Incident ticket is required${NC}"
-    exit 1
-fi
+read -rp "Enter incident ticket number: " incident_ticket
+[[ -z "${incident_ticket}" ]] && echo -e "${RED}Error: Incident ticket is required.${NC}" && exit 1
 
-# Select target account
+# ── Account Selection ─────────────────────────────────────────────────────────
 echo ""
 echo "Select target account:"
-echo "1) Security Account (${SECURITY_ACCOUNT_ID})"
-echo "2) Dev Account (${DEV_ACCOUNT_ID})"
-read -p "Enter choice (1 or 2): " account_choice
-
-case $account_choice in
-    1) TARGET_ACCOUNT_ID=$SECURITY_ACCOUNT_ID ;;
-    2) TARGET_ACCOUNT_ID=$DEV_ACCOUNT_ID ;;
-    *) echo "Invalid choice"; exit 1 ;;
+echo "  1) Security  (${SECURITY_ACCOUNT_ID})"
+echo "  2) Dev       (${DEV_ACCOUNT_ID})"
+read -rp "Choice [1/2]: " account_choice
+case "${account_choice}" in
+  1) TARGET_ACCOUNT_ID="${SECURITY_ACCOUNT_ID}" ;;
+  2) TARGET_ACCOUNT_ID="${DEV_ACCOUNT_ID}" ;;
+  *) echo "Invalid choice."; exit 1 ;;
 esac
 
-# Get MFA code
-read -p "Enter MFA code: " mfa_code
+# ── MFA Session ───────────────────────────────────────────────────────────────
+read -rp "Enter MFA code: " mfa_code
+echo -e "${YELLOW}Obtaining MFA session token...${NC}"
 
-echo -e "${YELLOW}Getting MFA session...${NC}"
-
-# Get MFA session
 aws sts get-session-token \
-  --serial-number ${MFA_SERIAL} \
-  --token-code ${mfa_code} \
+  --serial-number "${MFA_SERIAL}" \
+  --token-code    "${mfa_code}" \
   --duration-seconds 3600 \
   --output json > /tmp/mfa-session.json
 
-export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' /tmp/mfa-session.json)
+export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId'     /tmp/mfa-session.json)
 export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' /tmp/mfa-session.json)
-export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' /tmp/mfa-session.json)
+export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken'    /tmp/mfa-session.json)
 
-echo -e "${YELLOW}Assuming Break Glass role...${NC}"
-
-# Assume Break Glass role
+# ── Role Assumption ───────────────────────────────────────────────────────────
+echo -e "${YELLOW}Assuming Break Glass role in account ${TARGET_ACCOUNT_ID}...${NC}"
 SESSION_NAME="breakglass-${USER}-${incident_ticket}-$(date +%Y%m%d%H%M%S)"
-BREAKGLASS_ROLE="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/iam-guardrails-breakglass-role"
+BREAKGLASS_ROLE="arn:aws:iam::${TARGET_ACCOUNT_ID}:role/${ROLE_NAME}"
 
 aws sts assume-role \
-  --role-arn ${BREAKGLASS_ROLE} \
-  --role-session-name ${SESSION_NAME} \
+  --role-arn          "${BREAKGLASS_ROLE}" \
+  --role-session-name "${SESSION_NAME}" \
   --duration-seconds 3600 \
   --output json > /tmp/breakglass-session.json
 
-export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' /tmp/breakglass-session.json)
+export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId'     /tmp/breakglass-session.json)
 export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' /tmp/breakglass-session.json)
-export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' /tmp/breakglass-session.json)
+export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken'    /tmp/breakglass-session.json)
 
-# Log the access
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) | User: ${USER} | Incident: ${incident_ticket} | Account: ${TARGET_ACCOUNT_ID}" >> ~/.breakglass_audit.log
+# ── Local Audit Log ───────────────────────────────────────────────────────────
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) | User: ${USER} | Incident: ${incident_ticket} | Account: ${TARGET_ACCOUNT_ID}" \
+  >> ~/.breakglass_audit.log
+
+EXPIRY=$(jq -r '.Credentials.Expiration' /tmp/breakglass-session.json)
 
 echo ""
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  Break Glass Access Granted${NC}"
-echo -e "${GREEN}========================================${NC}"
+echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║         Break Glass Access Granted       ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "Account: ${TARGET_ACCOUNT_ID}"
-echo -e "Session: ${SESSION_NAME}"
-echo -e "Expires: $(jq -r '.Credentials.Expiration' /tmp/breakglass-session.json)"
+echo -e "  Account : ${TARGET_ACCOUNT_ID}"
+echo -e "  Session : ${SESSION_NAME}"
+echo -e "  Expires : ${EXPIRY}"
 echo ""
-echo -e "${RED}REMINDER: All actions are being logged!${NC}"
-echo -e "${RED}Exit this session as soon as possible.${NC}"
+echo -e "${RED}  All actions are being logged in CloudTrail.${NC}"
+echo -e "${RED}  Exit this session as soon as possible.${NC}"
 echo ""
 
-# Start a new shell with the credentials
 $SHELL
 ```
-</details>
 
-Usage:
+</details>
 
 ```bash
 chmod +x breakglass.sh
 ./breakglass.sh
 ```
 
-### Step 3: Perform Emergency Actions
+---
 
-While using Break Glass access:
+## 5. Step 3 — Perform Emergency Actions
 
-DO:
+### Rules of Engagement
 
-✅ Perform only the necessary actions to resolve the emergency
-✅ Document every action you take in real-time
-✅ Keep your session as short as possible
-✅ Verify each action before executing
-✅ Take screenshots of critical changes
+| Do | Do Not |
+|---|---|
+| Perform only the minimum actions needed to resolve the incident | Make changes unrelated to the declared emergency |
+| Document every action in real time (see log template below) | Share or delegate your Break Glass credentials |
+| Verify each command before executing | Leave the session running when unattended |
+| Take screenshots or copy output of critical changes | Perform irreversible actions without a second confirmation |
+| Exit the session immediately once the issue is resolved | Use the session for routine administrative tasks |
 
-DON'T:
+### Real-Time Action Log
 
-❌ Make unnecessary changes
-❌ Explore or browse resources unrelated to the emergency
-❌ Share credentials with others
-❌ Leave the session unattended
-❌ Perform destructive actions without double-checking
+Maintain this log throughout the session and attach it to the incident ticket.
 
-Action Log Template:
+| Time (UTC) | IAM Action | Resource | Outcome |
+|---|---|---|---|
+| `14:32:00` | `iam:CreateAccessKey` | `user/service-account` | Success |
+| `14:33:15` | `secretsmanager:UpdateSecret` | `prod/db-credentials` | Success |
+| `14:35:00` | `iam:DeleteAccessKey` (old key) | `user/service-account` | Success |
 
-Time (UTC)    | Action                           | Resource              | Result
---------------|----------------------------------|----------------------|--------
-14:32:00      | iam:CreateAccessKey              | user/service-account | Success
-14:33:15      | secretsmanager:UpdateSecret      | prod/db-credentials  | Success
-14:35:00      | iam:DeleteAccessKey (old key)    | user/service-account | Success
+---
 
-### Step 4: Exit Break Glass Session
+## 6. Step 4 — Exit the Break Glass Session
+
+### AWS CLI
 
 ```bash
-# Clear all AWS environment variables
+# Unset all temporary credentials
 unset AWS_ACCESS_KEY_ID
 unset AWS_SECRET_ACCESS_KEY
 unset AWS_SESSION_TOKEN
 unset AWS_PROFILE
 
 # Remove temporary credential files
-rm -f /tmp/mfa-session.json
-rm -f /tmp/breakglass-session.json
+rm -f /tmp/mfa-session.json /tmp/breakglass-session.json
 
-# Verify credentials are cleared
+# Confirm identity has reverted to normal
 aws sts get-caller-identity
-# Should fail or show your normal identity
-```
-In Console: Click your username → Switch Back or sign out completely.
-
-Verification:
-
-```bash
-# Confirm you no longer have Break Glass access
-aws iam create-user --user-name test-verification-user
-# Should fail with AccessDenied if guardrails are working
 ```
 
-### Step 5: Post-Incident Documentation
+### AWS Console
 
-Complete the incident report with:
+Click your account name in the top-right corner and select **Switch Back**, or sign out completely.
 
-- Start and end time of Break Glass session
-- All actions performed
-- Reason for each action
-- Any changes made to resources
-- Recommendations to prevent future emergencies
-
-
-
-## Monitoring & Alerts
-
-Break Glass role usage is automatically monitored:
-
-1. CloudWatch Alarm: Triggers when the role is assumed
-    - Alarm Name: `iam-guardrails-breakglass-usage-alarm`
-    - Metric: `BreakGlassRoleUsage`
-    - Threshold: Any usage (> 0)
-    - Notification: SNS topic `iam-guardrails-alerts`
-2. CloudTrail Logs: All actions performed with the Break Glass role are logged
+### Post-Exit Verification
 
 ```bash
-# Query CloudTrail for Break Glass activity
+# This must return AccessDenied to confirm guardrails are active
+aws iam create-user --user-name test-blocked-user --profile dev
+```
+
+---
+
+## 7. Step 5 — Post-Incident Documentation
+
+Submit an incident report within **24 hours** containing:
+
+- [ ] Incident ticket reference
+- [ ] Session start and end time (UTC)
+- [ ] Target account(s) accessed
+- [ ] Full action log (from Step 3 template above)
+- [ ] Root cause of the emergency
+- [ ] Any resources created, modified, or deleted
+- [ ] Recommended remediation to prevent recurrence
+
+---
+
+## 8. Monitoring and Alerts
+
+Break Glass role activity triggers automatic alerts through two independent mechanisms.
+
+### EventBridge → SNS (Real-Time)
+
+| Event | Rule | Notification |
+|---|---|---|
+| Role assumption succeeded | `iam-guardrails-breakglass-success` | Immediate SNS email to security team |
+| Role assumption failed (API/CLI) | `iam-guardrails-breakglass-failed` | Immediate SNS email |
+| Role switch failed (Console) | `iam-guardrails-breakglass-failed-console` | Immediate SNS email |
+
+### CloudTrail Queries
+
+**Query all Break Glass activity in the last 24 hours:**
+
+```bash
 aws cloudtrail lookup-events \
   --lookup-attributes AttributeKey=Username,AttributeValue=iam-guardrails-breakglass-role \
-  --start-time $(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ) \
-  --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  --start-time "$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --end-time   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --query 'Events[*].{Time:EventTime,Event:EventName,User:Username}' \
   --output table
 ```
-View Recent Break Glass Activity
+
+**Query all AssumeRole events referencing the Break Glass role (last 7 days):**
 
 ```bash
 aws cloudtrail lookup-events \
   --lookup-attributes AttributeKey=EventName,AttributeValue=AssumeRole \
-  --start-time $(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ) \
+  --start-time "$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)" \
   --query "Events[?contains(CloudTrailEvent, 'breakglass')]" \
-  --output json | jq '.[] | {time: .EventTime, event: .CloudTrailEvent | fromjson | {user: .userIdentity.arn, sourceIP: .sourceIPAddress}}'
+  --output json \
+  | jq '.[] | {
+      time: .EventTime,
+      user: (.CloudTrailEvent | fromjson | .userIdentity.arn),
+      sourceIP: (.CloudTrailEvent | fromjson | .sourceIPAddress)
+    }'
 ```
 
-3. SNS Notification: Security team is notified immediately
+---
 
+## 9. Cross-Account Access
 
-## Cross-Account Break Glass Access
+Use these methods to access the Dev account from the Security account.
 
-To access the Dev account from the Security account:
-
-### Method 1: Direct Cross-Account Assume
+### Method 1 — Direct Cross-Account Assume (CLI)
 
 ```bash
-# First, authenticate with MFA in Security account
-MFA_SERIAL="arn:aws:iam::SECURITY_ACCOUNT_ID:mfa/YOUR_USERNAME"
+# ── Authenticate with MFA in the Security account ────────────────────────────
+MFA_SERIAL="arn:aws:iam::865147226759:mfa/YOUR_USERNAME"
 
 aws sts get-session-token \
-  --serial-number ${MFA_SERIAL} \
-  --token-code YOUR_MFA_CODE \
+  --serial-number "${MFA_SERIAL}" \
+  --token-code    YOUR_MFA_CODE \
   --profile security \
   --output json > /tmp/mfa-session.json
 
-# Export MFA session credentials
-export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' /tmp/mfa-session.json)
+export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId'     /tmp/mfa-session.json)
 export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' /tmp/mfa-session.json)
-export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' /tmp/mfa-session.json)
+export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken'    /tmp/mfa-session.json)
 
-# Assume Security account Break Glass role
+# ── Assume Security account Break Glass role ──────────────────────────────────
 aws sts assume-role \
-  --role-arn arn:aws:iam::SECURITY_ACCOUNT_ID:role/iam-guardrails-breakglass-role \
-  --role-session-name breakglass-step1 \
+  --role-arn          arn:aws:iam::865147226759:role/iam-guardrails-breakglass-role \
+  --role-session-name breakglass-security \
   --output json > /tmp/security-breakglass.json
 
-# Export Security Break Glass credentials
-export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' /tmp/security-breakglass.json)
+export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId'     /tmp/security-breakglass.json)
 export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' /tmp/security-breakglass.json)
-export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' /tmp/security-breakglass.json)
+export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken'    /tmp/security-breakglass.json)
 
-# Now assume Dev account Break Glass role
+# ── Chain to Dev account Break Glass role ────────────────────────────────────
 aws sts assume-role \
-  --role-arn arn:aws:iam::DEV_ACCOUNT_ID:role/iam-guardrails-breakglass-role \
-  --role-session-name breakglass-dev-access \
+  --role-arn          arn:aws:iam::418272768233:role/iam-guardrails-breakglass-role \
+  --role-session-name breakglass-dev \
   --output json > /tmp/dev-breakglass.json
 
-# Export Dev Break Glass credentials
-export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' /tmp/dev-breakglass.json)
+export AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId'     /tmp/dev-breakglass.json)
 export AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' /tmp/dev-breakglass.json)
-export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' /tmp/dev-breakglass.json)
+export AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken'    /tmp/dev-breakglass.json)
 
-# Verify
 aws sts get-caller-identity
 ```
 
-## Method 2: Using AWS CLI Profiles
+---
 
-Add to `~/.aws/config`:
+### Method 2 — AWS CLI Named Profiles
 
-```bash
+Add the following to `~/.aws/config` to enable automatic MFA prompting and role chaining:
+
+```ini
 [profile security]
 region = us-east-1
 
 [profile security-mfa]
-region = us-east-1
-source_profile = security
-mfa_serial = arn:aws:iam::SECURITY_ACCOUNT_ID:mfa/YOUR_USERNAME
+region          = us-east-1
+source_profile  = security
+mfa_serial      = arn:aws:iam::865147226759:mfa/YOUR_USERNAME
 
 [profile breakglass-security]
-region = us-east-1
-source_profile = security-mfa
-role_arn = arn:aws:iam::SECURITY_ACCOUNT_ID:role/iam-guardrails-breakglass-role
+region          = us-east-1
+source_profile  = security-mfa
+role_arn        = arn:aws:iam::865147226759:role/iam-guardrails-breakglass-role
 
 [profile breakglass-dev]
-region = us-east-1
-source_profile = breakglass-security
-role_arn = arn:aws:iam::DEV_ACCOUNT_ID:role/iam-guardrails-breakglass-role
+region          = us-east-1
+source_profile  = breakglass-security
+role_arn        = arn:aws:iam::418272768233:role/iam-guardrails-breakglass-role
 ```
 
-Usage:
+The AWS CLI will prompt for an MFA code and chain through both roles automatically:
 
 ```bash
-# Will prompt for MFA and chain through roles
 aws sts get-caller-identity --profile breakglass-dev
 ```
