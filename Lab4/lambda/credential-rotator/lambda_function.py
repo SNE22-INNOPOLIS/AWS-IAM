@@ -99,14 +99,14 @@ def _send_pre_rotation_notice(username, key_id, age_days, results):
             Subject=f"[IAM Key Rotation] Action required for {username}",
             Message=message,
         )
-        results["notified"].append({"user": username, "key": key_id})
+        results["notified"].append({"user": username, "key": key_id, "phase": "pre"})
         logger.info("Pre-rotation notice sent for %s / %s", username, key_id)
     except Exception as exc:
         logger.warning("Could not send SNS notice for %s: %s", username, exc)
 
 
 def _rotate_key(iam, username, old_key_id, all_keys, results):
-    # IAM allows a maximum of 2 access keys per user. Free up a slot before creating.
+    # IAM enforces a hard limit of 2 keys per user; free a slot before creating.
     if len(all_keys) >= 2:
         _free_key_slot(iam, username, old_key_id, all_keys)
 
@@ -126,9 +126,44 @@ def _rotate_key(iam, username, old_key_id, all_keys, results):
         }
     )
 
+    _send_post_rotation_notice(username, old_key_id, new_key["AccessKeyId"], results)
+
+
+def _send_post_rotation_notice(username, old_key_id, new_key_id, results):
+    if not SNS_TOPIC_ARN:
+        return
+
+    sns = boto3.client("sns")
+    secret_path = f"{SECRET_PREFIX}/{username}"
+    rotated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    message = (
+        f"IAM Access Key Rotation Complete\n\n"
+        f"User:        {username}\n"
+        f"Old Key ID:  {old_key_id} (deleted)\n"
+        f"New Key ID:  {new_key_id}\n"
+        f"Rotated At:  {rotated_at}\n\n"
+        f"The new Secret Access Key is stored securely in AWS Secrets Manager.\n"
+        f"Retrieve it with:\n\n"
+        f"  aws secretsmanager get-secret-value \\\n"
+        f"    --secret-id {secret_path} \\\n"
+        f"    --query SecretString --output text\n\n"
+        f"Update any application or service using the old key immediately.\n"
+        f"The old key ({old_key_id}) has been permanently deleted and is no longer valid."
+    )
+
+    try:
+        sns.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Subject=f"[IAM Key Rotation] Complete for {username}",
+            Message=message,
+        )
+        results["notified"].append({"user": username, "key": new_key_id, "phase": "post"})
+        logger.info("Post-rotation notice sent for %s / %s", username, new_key_id)
+    except Exception as exc:
+        logger.warning("Could not send post-rotation SNS notice for %s: %s", username, exc)
+
 
 def _free_key_slot(iam, username, key_being_rotated, all_keys):
-    # Prefer deleting an already-inactive key that is NOT the one being rotated.
     inactive = [
         k
         for k in all_keys
@@ -136,24 +171,14 @@ def _free_key_slot(iam, username, key_being_rotated, all_keys):
     ]
     if inactive:
         victim = min(inactive, key=lambda k: k["CreateDate"])
-        logger.info(
-            "Deleting inactive key %s for %s to free slot",
-            victim["AccessKeyId"],
-            username,
-        )
+        logger.info("Deleting inactive key %s for %s to free slot", victim["AccessKeyId"], username)
         iam.delete_access_key(UserName=username, AccessKeyId=victim["AccessKeyId"])
         return
 
-    # No disposable inactive key — deactivate the stale key so we can create its
-    # replacement. The caller deletes the old key after storing the new secret.
-    logger.info(
-        "No inactive key available; deactivating %s for %s to free slot",
-        key_being_rotated,
-        username,
-    )
-    iam.update_access_key(
-        UserName=username, AccessKeyId=key_being_rotated, Status="Inactive"
-    )
+    # No inactive key available — deactivate the stale key so the new one can be
+    # created. The caller deletes it after storing the new secret.
+    logger.info("Deactivating %s for %s to free slot", key_being_rotated, username)
+    iam.update_access_key(UserName=username, AccessKeyId=key_being_rotated, Status="Inactive")
 
 
 def _store_secret(username, new_key):

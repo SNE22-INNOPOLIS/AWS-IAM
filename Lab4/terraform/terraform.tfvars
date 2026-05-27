@@ -1,4 +1,4 @@
-security_account_id        = "REDACTED"
+security_account_id        = "865147226759"
 security_account_profile   = "security"
 primary_region             = "us-east-1"
 project_name               = "iam-key-rotator"
@@ -17,3 +17,4 @@ log_retention_days = 30
 
 # Encryption
 kms_key_alias = "alias/aws/sns"
+

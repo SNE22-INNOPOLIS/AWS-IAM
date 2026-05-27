@@ -32,7 +32,7 @@ module "key_rotator" {
   environment       = "security-lab"
   aws_region        = var.primary_region
   account_id        = var.security_account_id
-  lambda_source_dir = "${path.root}/../../lambda/credential-rotator"
+  lambda_source_dir = "${path.root}/../lambda/credential-rotator"
 
   rotation_age_days   = var.rotation_age_days
   schedule_expression = var.lambda_schedule_expression

@@ -17,8 +17,6 @@ locals {
   partition     = data.aws_partition.current.partition
 }
 
-# ── Lambda execution role ────────────────────────────────────────────────────
-
 resource "aws_iam_role" "lambda" {
   name = "${local.function_name}-role"
 
@@ -58,7 +56,6 @@ resource "aws_iam_role_policy" "key_management" {
           "iam:DeleteAccessKey",
           "iam:UpdateAccessKey",
         ]
-        # Constrained to the account so the Lambda cannot act cross-account.
         Resource = "arn:${local.partition}:iam::${var.account_id}:user/*"
       },
       {
@@ -91,16 +88,12 @@ resource "aws_iam_role_policy" "key_management" {
   })
 }
 
-# ── Lambda deployment package ────────────────────────────────────────────────
-
 data "archive_file" "lambda_zip" {
   type        = "zip"
   source_dir  = var.lambda_source_dir
   output_path = "${path.module}/files/credential-rotator.zip"
   excludes    = ["test_lambda.py", "__pycache__", "*.pyc"]
 }
-
-# ── Lambda function ──────────────────────────────────────────────────────────
 
 resource "aws_lambda_function" "rotator" {
   function_name    = local.function_name
@@ -132,8 +125,6 @@ resource "aws_cloudwatch_log_group" "lambda" {
   retention_in_days = var.log_retention_days
   tags              = var.tags
 }
-
-# ── EventBridge weekly schedule ──────────────────────────────────────────────
 
 resource "aws_cloudwatch_event_rule" "weekly_rotation" {
   name                = "${local.function_name}-schedule"

@@ -3,31 +3,21 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
-# Module-level env setup — no hardcoded ARNs.
-# SNS_TOPIC_ARN is intentionally left empty here; tests that require it
-# set it via @patch.object so the module-level constant is overridden correctly.
 os.environ.setdefault("ROTATION_AGE_DAYS", "90")
 os.environ.setdefault("SNS_TOPIC_ARN", "")
 os.environ.setdefault("SECRET_PREFIX", "iam/access-keys")
 os.environ.setdefault("PROTECTED_USERS", '["system-user"]')
 os.environ.setdefault("DRY_RUN", "false")
 
-import lambda_function  # noqa: E402  (imported after env setup)
+import lambda_function  # noqa: E402
 
-# ARN components — each sourced from env vars that mirror terraform.tfvars.
-# Set these in your shell from Terraform outputs before running integration tests:
-#   export AWS_PARTITION=aws
-#   export PRIMARY_REGION=$(terraform output -raw primary_region)
-#   export SECURITY_ACCOUNT_ID=$(terraform output -raw security_account_id)
-#   export SNS_TOPIC_NAME=$(terraform output -raw sns_topic_name)
-_AWS_PARTITION      = os.environ.get("AWS_PARTITION", "aws")
-_AWS_REGION         = os.environ.get("PRIMARY_REGION", os.environ.get("AWS_DEFAULT_REGION", ""))
-_AWS_ACCOUNT_ID     = os.environ.get("SECURITY_ACCOUNT_ID", os.environ.get("AWS_ACCOUNT_ID", ""))
-_SNS_TOPIC_NAME     = os.environ.get("SNS_TOPIC_NAME", "")
+_AWS_PARTITION = os.environ.get("AWS_PARTITION", "aws")
+_AWS_REGION = os.environ.get("PRIMARY_REGION", os.environ.get("AWS_DEFAULT_REGION", ""))
+_AWS_ACCOUNT_ID = os.environ.get("SECURITY_ACCOUNT_ID", os.environ.get("AWS_ACCOUNT_ID", ""))
+_SNS_TOPIC_NAME = os.environ.get("SNS_TOPIC_NAME", "")
 _TEST_SECRET_PREFIX = os.environ.get("SECRET_PREFIX", "iam/access-keys")
 
-# Built entirely from variables — no literal ARN string anywhere in this file.
-# Uses `or` so an empty SNS_TOPIC_ARN env var falls through to the constructed value.
+# `or` ensures an empty SNS_TOPIC_ARN env var falls through to the constructed value
 _TEST_SNS_ARN = os.environ.get("SNS_TOPIC_ARN") or f"arn:{_AWS_PARTITION}:sns:{_AWS_REGION}:{_AWS_ACCOUNT_ID}:{_SNS_TOPIC_NAME}"
 
 
@@ -153,6 +143,7 @@ class TestSendPreRotationNotice(unittest.TestCase):
         lambda_function._send_pre_rotation_notice("grace", "AKIA_X", 95, results)
         mock_sns.publish.assert_called_once()
         self.assertEqual(results["notified"][0]["user"], "grace")
+        self.assertEqual(results["notified"][0]["phase"], "pre")
 
     @patch.object(lambda_function, "SNS_TOPIC_ARN", "")
     @patch("boto3.client")
@@ -170,6 +161,50 @@ class TestSendPreRotationNotice(unittest.TestCase):
         mock_boto.return_value = mock_sns
         results = {"notified": []}
         lambda_function._send_pre_rotation_notice("iris", "AKIA_Z", 91, results)
+        self.assertEqual(results["notified"], [])
+
+
+class TestSendPostRotationNotice(unittest.TestCase):
+    @patch.object(lambda_function, "SNS_TOPIC_ARN", _TEST_SNS_ARN)
+    @patch("boto3.client")
+    def test_publishes_completion_notice(self, mock_boto):
+        mock_sns = MagicMock()
+        mock_boto.return_value = mock_sns
+        results = {"notified": []}
+        lambda_function._send_post_rotation_notice("grace", "AKIA_OLD", "AKIA_NEW", results)
+        mock_sns.publish.assert_called_once()
+        call_kwargs = mock_sns.publish.call_args[1]
+        self.assertIn("AKIA_NEW", call_kwargs["Message"])
+        self.assertIn("AKIA_OLD", call_kwargs["Message"])
+        self.assertNotIn("SecretAccessKey", call_kwargs["Message"])
+        self.assertEqual(results["notified"][0]["phase"], "post")
+
+    @patch.object(lambda_function, "SNS_TOPIC_ARN", "")
+    @patch("boto3.client")
+    def test_skips_when_no_topic_configured(self, mock_boto):
+        results = {"notified": []}
+        lambda_function._send_post_rotation_notice("henry", "AKIA_OLD", "AKIA_NEW", results)
+        mock_boto.assert_not_called()
+        self.assertEqual(results["notified"], [])
+
+    @patch.object(lambda_function, "SNS_TOPIC_ARN", _TEST_SNS_ARN)
+    @patch("boto3.client")
+    def test_message_contains_secrets_manager_path(self, mock_boto):
+        mock_sns = MagicMock()
+        mock_boto.return_value = mock_sns
+        results = {"notified": []}
+        lambda_function._send_post_rotation_notice("alice", "AKIA_OLD", "AKIA_NEW", results)
+        call_kwargs = mock_sns.publish.call_args[1]
+        self.assertIn(f"{_TEST_SECRET_PREFIX}/alice", call_kwargs["Message"])
+
+    @patch.object(lambda_function, "SNS_TOPIC_ARN", _TEST_SNS_ARN)
+    @patch("boto3.client")
+    def test_warning_logged_on_sns_failure(self, mock_boto):
+        mock_sns = MagicMock()
+        mock_sns.publish.side_effect = Exception("network error")
+        mock_boto.return_value = mock_sns
+        results = {"notified": []}
+        lambda_function._send_post_rotation_notice("bob", "AKIA_OLD", "AKIA_NEW", results)
         self.assertEqual(results["notified"], [])
 
 
