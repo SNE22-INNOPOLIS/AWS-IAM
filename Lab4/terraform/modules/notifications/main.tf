@@ -18,11 +18,7 @@ resource "aws_sns_topic_subscription" "email" {
   protocol  = "email"
   endpoint  = var.notification_email
 
-  # AWS puts email subscriptions in PendingConfirmation until the link in the
-  # confirmation email is clicked. If never confirmed, AWS deletes it after 72h.
-  # prevent_destroy stops Terraform from recreating it on every apply, which
-  # would re-trigger the confirmation email and reset the 72-hour window.
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
