@@ -1,0 +1,445 @@
+{
+  "DataSetIdentifierDeclarations": [
+    {
+      "Identifier": "UnusedPermissionsDS",
+      "DataSetArn": "__UNUSED_PERMISSIONS_DATASET_ARN__"
+    },
+    {
+      "Identifier": "StaleAccessKeysDS",
+      "DataSetArn": "__STALE_ACCESS_KEYS_DATASET_ARN__"
+    },
+    {
+      "Identifier": "SCPViolationsDS",
+      "DataSetArn": "__SCP_VIOLATIONS_DATASET_ARN__"
+    }
+  ],
+  "Sheets": [
+    {
+      "SheetId": "iam-health-overview",
+      "Name": "IAM Health Overview",
+      "Visuals": [
+        {
+          "KPIVisual": {
+            "VisualId": "kpi-unused-permissions",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "% Roles with Unused Permissions"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Roles with at least one never-used IAM service (last 90 days)"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "Values": [
+                  {
+                    "NumericalMeasureField": {
+                      "FieldId": "pct_roles_with_unused_perms_value",
+                      "Column": {
+                        "DataSetIdentifier": "UnusedPermissionsDS",
+                        "ColumnName": "pct_roles_with_unused_permissions"
+                      },
+                      "AggregationFunction": {
+                        "SimpleNumericalAggregation": "MAX"
+                      }
+                    }
+                  }
+                ],
+                "TargetValues": [],
+                "TrendGroups": [
+                  {
+                    "DateDimensionField": {
+                      "FieldId": "unused_perms_trend_date",
+                      "Column": {
+                        "DataSetIdentifier": "UnusedPermissionsDS",
+                        "ColumnName": "report_date"
+                      },
+                      "DateGranularity": "DAY"
+                    }
+                  }
+                ]
+              },
+              "KPIOptions": {
+                "PrimaryValueDisplayType": "ACTUAL",
+                "Comparison": {
+                  "ComparisonMethod": "PERCENT_DIFFERENCE",
+                  "ComparisonFormat": {
+                    "NumberDisplayFormatConfiguration": {
+                      "Suffix": "%",
+                      "DecimalPlacesConfiguration": {
+                        "DecimalPlaces": 1
+                      }
+                    }
+                  }
+                },
+                "PrimaryValueFontConfiguration": {
+                  "FontSize": {
+                    "Relative": "EXTRA_LARGE"
+                  },
+                  "FontWeight": {
+                    "Name": "BOLD"
+                  },
+                  "FontColor": "#D13212"
+                },
+                "ProgressBar": {
+                  "Visibility": "VISIBLE"
+                },
+                "TrendArrows": {
+                  "Visibility": "VISIBLE"
+                },
+                "SecondaryValue": {
+                  "Visibility": "VISIBLE"
+                }
+              },
+              "SortConfiguration": {}
+            },
+            "Actions": [],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "KPIVisual": {
+            "VisualId": "kpi-stale-access-keys",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Access Keys > 90 Days Old"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Count of currently Active keys exceeding the rotation threshold"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "Values": [
+                  {
+                    "NumericalMeasureField": {
+                      "FieldId": "stale_key_count_value",
+                      "Column": {
+                        "DataSetIdentifier": "StaleAccessKeysDS",
+                        "ColumnName": "stale_key_count"
+                      },
+                      "AggregationFunction": {
+                        "SimpleNumericalAggregation": "MAX"
+                      }
+                    }
+                  }
+                ],
+                "TargetValues": [
+                  {
+                    "NumericalMeasureField": {
+                      "FieldId": "stale_key_target",
+                      "Column": {
+                        "DataSetIdentifier": "StaleAccessKeysDS",
+                        "ColumnName": "stale_key_count"
+                      },
+                      "AggregationFunction": {
+                        "SimpleNumericalAggregation": "MIN"
+                      }
+                    }
+                  }
+                ],
+                "TrendGroups": [
+                  {
+                    "DateDimensionField": {
+                      "FieldId": "stale_keys_trend_date",
+                      "Column": {
+                        "DataSetIdentifier": "StaleAccessKeysDS",
+                        "ColumnName": "report_date"
+                      },
+                      "DateGranularity": "DAY"
+                    }
+                  }
+                ]
+              },
+              "KPIOptions": {
+                "PrimaryValueDisplayType": "ACTUAL",
+                "Comparison": {
+                  "ComparisonMethod": "DIFFERENCE",
+                  "ComparisonFormat": {
+                    "NumberDisplayFormatConfiguration": {
+                      "DecimalPlacesConfiguration": {
+                        "DecimalPlaces": 0
+                      }
+                    }
+                  }
+                },
+                "PrimaryValueFontConfiguration": {
+                  "FontSize": {
+                    "Relative": "EXTRA_LARGE"
+                  },
+                  "FontWeight": {
+                    "Name": "BOLD"
+                  },
+                  "FontColor": "#FF9900"
+                },
+                "TrendArrows": {
+                  "Visibility": "VISIBLE"
+                },
+                "SecondaryValue": {
+                  "Visibility": "VISIBLE"
+                }
+              },
+              "SortConfiguration": {}
+            },
+            "Actions": [],
+            "ColumnHierarchies": []
+          }
+        },
+        {
+          "LineChartVisual": {
+            "VisualId": "line-scp-violations-trend",
+            "Title": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "SCP Violation Attempts — Trend (Last 30 Days)"
+              }
+            },
+            "Subtitle": {
+              "Visibility": "VISIBLE",
+              "FormatText": {
+                "PlainText": "Daily count of CloudTrail AccessDenied events blocked by Service Control Policies"
+              }
+            },
+            "ChartConfiguration": {
+              "FieldWells": {
+                "LineChartAggregatedFieldWells": {
+                  "Category": [
+                    {
+                      "DateDimensionField": {
+                        "FieldId": "scp_violation_date",
+                        "Column": {
+                          "DataSetIdentifier": "SCPViolationsDS",
+                          "ColumnName": "report_date"
+                        },
+                        "DateGranularity": "DAY"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "scp_violation_count_value",
+                        "Column": {
+                          "DataSetIdentifier": "SCPViolationsDS",
+                          "ColumnName": "violation_count"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "SUM"
+                        }
+                      }
+                    },
+                    {
+                      "NumericalMeasureField": {
+                        "FieldId": "scp_unique_principals_value",
+                        "Column": {
+                          "DataSetIdentifier": "SCPViolationsDS",
+                          "ColumnName": "unique_principals"
+                        },
+                        "AggregationFunction": {
+                          "SimpleNumericalAggregation": "MAX"
+                        }
+                      }
+                    }
+                  ],
+                  "Colors": [],
+                  "SmallMultiples": []
+                }
+              },
+              "SortConfiguration": {
+                "CategorySort": [
+                  {
+                    "FieldSort": {
+                      "FieldId": "scp_violation_date",
+                      "Direction": "ASC"
+                    }
+                  }
+                ]
+              },
+              "Type": "LINE",
+              "DefaultSeriesSettings": {
+                "LineStyleSettings": {
+                  "LineVisibility": "VISIBLE",
+                  "LineInterpolation": "SMOOTH",
+                  "LineStyle": "SOLID",
+                  "LineWidth": "2px"
+                },
+                "MarkerStyleSettings": {
+                  "MarkerVisibility": "VISIBLE",
+                  "MarkerShape": "CIRCLE",
+                  "MarkerSize": "3px"
+                }
+              },
+              "XAxisDisplayOptions": {
+                "AxisLineVisibility": "VISIBLE",
+                "GridLineVisibility": "HIDDEN",
+                "TickLabelOptions": {
+                  "LabelOptions": {
+                    "Visibility": "VISIBLE"
+                  }
+                }
+              },
+              "YAxisDisplayOptions": {
+                "AxisLineVisibility": "VISIBLE",
+                "GridLineVisibility": "VISIBLE"
+              },
+              "Legend": {
+                "Visibility": "VISIBLE",
+                "Position": "BOTTOM",
+                "Title": {
+                  "Visibility": "HIDDEN"
+                }
+              },
+              "DataLabels": {
+                "Visibility": "HIDDEN"
+              },
+              "Tooltip": {
+                "TooltipVisibility": "VISIBLE",
+                "SelectedTooltipType": "DETAILED",
+                "FieldBasedTooltip": {
+                  "AggregationVisibility": "HIDDEN",
+                  "TooltipTitleType": "PRIMARY_VALUE",
+                  "TooltipFields": [
+                    {
+                      "FieldTooltipItem": {
+                        "FieldId": "scp_violation_date",
+                        "Visibility": "VISIBLE"
+                      }
+                    },
+                    {
+                      "FieldTooltipItem": {
+                        "FieldId": "scp_violation_count_value",
+                        "Label": "Violations",
+                        "Visibility": "VISIBLE"
+                      }
+                    },
+                    {
+                      "FieldTooltipItem": {
+                        "FieldId": "scp_unique_principals_value",
+                        "Label": "Unique Principals",
+                        "Visibility": "VISIBLE"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "Actions": [],
+            "ColumnHierarchies": [
+              {
+                "DateTimeHierarchy": {
+                  "HierarchyId": "scp_date_hierarchy",
+                  "DrillDownFilters": []
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "Layouts": [
+        {
+          "Configuration": {
+            "GridLayout": {
+              "Elements": [
+                {
+                  "ElementId": "kpi-unused-permissions",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 0,
+                  "ColumnSpan": 18,
+                  "RowIndex": 0,
+                  "RowSpan": 7
+                },
+                {
+                  "ElementId": "kpi-stale-access-keys",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 18,
+                  "ColumnSpan": 18,
+                  "RowIndex": 0,
+                  "RowSpan": 7
+                },
+                {
+                  "ElementId": "line-scp-violations-trend",
+                  "ElementType": "VISUAL",
+                  "ColumnIndex": 0,
+                  "ColumnSpan": 36,
+                  "RowIndex": 7,
+                  "RowSpan": 12
+                }
+              ],
+              "CanvasSizeOptions": {
+                "ScreenCanvasSizeOptions": {
+                  "ResizeOption": "FIXED",
+                  "OptimizedViewPortWidth": "1600px"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "SheetControlLayouts": [],
+      "ContentType": "INTERACTIVE"
+    }
+  ],
+  "CalculatedFields": [],
+  "ParameterDeclarations": [],
+  "FilterGroups": [
+    {
+      "FilterGroupId": "date-range-filter",
+      "Filters": [
+        {
+          "RelativeDatesFilter": {
+            "FilterId": "scp-date-range",
+            "Column": {
+              "DataSetIdentifier": "SCPViolationsDS",
+              "ColumnName": "report_date"
+            },
+            "AnchorDateConfiguration": {
+              "AnchorOption": "NOW"
+            },
+            "MinimumGranularity": "DAY",
+            "TimeGranularity": "DAY",
+            "RelativeDateType": "LAST",
+            "RelativeDateValue": 30,
+            "NullOption": "NON_NULLS_ONLY"
+          }
+        }
+      ],
+      "ScopeConfiguration": {
+        "SelectedSheets": {
+          "SheetVisualScopingConfigurations": [
+            {
+              "SheetId": "iam-health-overview",
+              "Scope": "SELECTED_VISUALS",
+              "VisualIds": ["line-scp-violations-trend"]
+            }
+          ]
+        }
+      },
+      "CrossDataset": "SINGLE_DATASET",
+      "Status": "ENABLED"
+    }
+  ],
+  "ColumnConfigurations": [],
+  "AnalysisDefaults": {
+    "DefaultNewSheetConfiguration": {
+      "InteractiveLayoutConfiguration": {
+        "Grid": {
+          "CanvasSizeOptions": {
+            "ScreenCanvasSizeOptions": {
+              "ResizeOption": "FIXED",
+              "OptimizedViewPortWidth": "1600px"
+            }
+          }
+        }
+      },
+      "SheetContentType": "INTERACTIVE"
+    }
+  }
+}
