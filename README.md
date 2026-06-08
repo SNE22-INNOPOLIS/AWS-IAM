@@ -13,7 +13,7 @@ Each lab is self-contained, builds on the previous one, and is tracked against a
 | [Lab 1](Lab1/) | Multi-Account Security Foundation | [[INFRA] Provision Multi-Account Security Lab Environment](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/1) | Complete |
 | [Lab 2](Lab2/) | IAM Access Analyzer & Unused Permission Report | [[POLICY] Implement IAM Access Analyzer & Unused Permission Report](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/2) | Complete |
 | [Lab 3](Lab3/) | IAM Preventative Guardrails | [[GOVERNANCE] Deploy Service Control Policies (SCPs) for Guardrails](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/3) | Complete |
-| Lab 4 | Automated Credential Rotation Lambda | [[AUTOMATE] Build Automated Credential Rotation Lambda](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/4) | Planned |
+| [Lab 4 ](https://github.com/SNE22-INNOPOLIS/AWS-IAM/tree/main/Lab4)| Automated Credential Rotation Lambda | [[AUTOMATE] Build Automated Credential Rotation Lambda](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/4) | Planned |
 | Lab 5 | Security Posture Dashboard | [[VISUALIZE] Create Security Posture Dashboard (QuickSight/Security Hub)](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/5) | Planned |
 | Lab 6 | Architecture Diagram & Operational Runbook | [[DOCUMENT] Architecture Diagram & Operational Runbook](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/6) | Planned |
 | Lab 7 | Security Validation & Penetration Test | [[TEST] Security Validation & Penetration Test](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/7) | Planned |
