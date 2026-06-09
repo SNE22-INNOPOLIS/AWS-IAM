@@ -1,9 +1,10 @@
 terraform {
+  # Use the backend from Lab1
   backend "s3" {
-    bucket         = "security-lab-terraform-state"
-    key            = "lab5/iam-dashboard/terraform.tfstate"
+    bucket         = "security-lab-tfstate-security-account"
+    key            = "security-lab/lab5/terraform.tfstate"
     region         = "us-east-1"
-    dynamodb_table = "security-lab-terraform-locks"
+    use_lockfile   = true
     encrypt        = true
     profile        = "security"
   }

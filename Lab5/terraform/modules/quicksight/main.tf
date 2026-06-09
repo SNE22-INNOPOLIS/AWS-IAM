@@ -1,3 +1,11 @@
+terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+}
+
 # =============================================================================
 # quicksight module
 #
@@ -121,16 +129,19 @@ resource "aws_quicksight_data_source" "athena" {
     }
   }
 
-  permission {
-    actions   = [
-      "quicksight:DescribeDataSource",
-      "quicksight:DescribeDataSourcePermissions",
-      "quicksight:PassDataSource",
-      "quicksight:UpdateDataSource",
-      "quicksight:DeleteDataSource",
-      "quicksight:UpdateDataSourcePermissions",
-    ]
-    principal = var.quicksight_user_arn
+  dynamic "permission" {
+    for_each = var.quicksight_user_arn != "" ? [var.quicksight_user_arn] : []
+    content {
+      actions = [
+        "quicksight:DescribeDataSource",
+        "quicksight:DescribeDataSourcePermissions",
+        "quicksight:PassDataSource",
+        "quicksight:UpdateDataSource",
+        "quicksight:DeleteDataSource",
+        "quicksight:UpdateDataSourcePermissions",
+      ]
+      principal = permission.value
+    }
   }
 
   ssl_properties {
@@ -228,22 +239,6 @@ resource "aws_quicksight_data_set" "unused_permissions" {
       }
     }
   }
-
-  permission {
-    actions = [
-      "quicksight:DescribeDataSet",
-      "quicksight:DescribeDataSetPermissions",
-      "quicksight:PassDataSet",
-      "quicksight:DescribeIngestion",
-      "quicksight:ListIngestions",
-      "quicksight:UpdateDataSet",
-      "quicksight:DeleteDataSet",
-      "quicksight:CreateIngestion",
-      "quicksight:CancelIngestion",
-      "quicksight:UpdateDataSetPermissions",
-    ]
-    principal = var.quicksight_user_arn
-  }
 }
 
 # ---------------------------------------------------------------------------
@@ -277,22 +272,6 @@ resource "aws_quicksight_data_set" "stale_keys" {
         type = "INTEGER"
       }
     }
-  }
-
-  permission {
-    actions = [
-      "quicksight:DescribeDataSet",
-      "quicksight:DescribeDataSetPermissions",
-      "quicksight:PassDataSet",
-      "quicksight:DescribeIngestion",
-      "quicksight:ListIngestions",
-      "quicksight:UpdateDataSet",
-      "quicksight:DeleteDataSet",
-      "quicksight:CreateIngestion",
-      "quicksight:CancelIngestion",
-      "quicksight:UpdateDataSetPermissions",
-    ]
-    principal = var.quicksight_user_arn
   }
 }
 
@@ -331,21 +310,5 @@ resource "aws_quicksight_data_set" "scp_violations" {
         type = "INTEGER"
       }
     }
-  }
-
-  permission {
-    actions = [
-      "quicksight:DescribeDataSet",
-      "quicksight:DescribeDataSetPermissions",
-      "quicksight:PassDataSet",
-      "quicksight:DescribeIngestion",
-      "quicksight:ListIngestions",
-      "quicksight:UpdateDataSet",
-      "quicksight:DeleteDataSet",
-      "quicksight:CreateIngestion",
-      "quicksight:CancelIngestion",
-      "quicksight:UpdateDataSetPermissions",
-    ]
-    principal = var.quicksight_user_arn
   }
 }

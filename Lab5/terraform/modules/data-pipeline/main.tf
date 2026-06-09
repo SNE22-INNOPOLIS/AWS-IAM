@@ -1,3 +1,11 @@
+terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+}
+
 # =============================================================================
 # data-pipeline module
 #
@@ -49,6 +57,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "findings" {
   rule {
     id     = "expire-old-findings"
     status = "Enabled"
+    filter {}
 
     expiration {
       days = var.findings_retention_days
@@ -62,6 +71,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "findings" {
   rule {
     id     = "abort-incomplete-uploads"
     status = "Enabled"
+    filter {}
 
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
