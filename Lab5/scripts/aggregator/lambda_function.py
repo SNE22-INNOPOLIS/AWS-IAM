@@ -32,7 +32,7 @@ logger.setLevel(logging.INFO)
 FINDINGS_BUCKET = os.environ["FINDINGS_BUCKET"]
 ANALYZER_ARN = os.environ.get("ANALYZER_ARN", "")
 KEY_AGE_THRESHOLD_DAYS = int(os.environ.get("KEY_AGE_THRESHOLD_DAYS", "90"))
-REGION = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+REGION = os.environ.get("IAM_DASHBOARD_REGION") or os.environ.get("AWS_REGION", "us-east-1")
 
 
 # ---------------------------------------------------------------------------

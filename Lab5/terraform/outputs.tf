@@ -39,23 +39,23 @@ output "lambda_function_arn" {
 }
 
 output "quicksight_data_source_arn" {
-  description = "ARN of the QuickSight Athena data source"
-  value       = module.quicksight.data_source_arn
+  description = "ARN of the QuickSight Athena data source (empty when enable_quicksight = false)"
+  value       = var.enable_quicksight ? module.quicksight[0].data_source_arn : ""
 }
 
 output "quicksight_unused_permissions_dataset_arn" {
-  description = "ARN of the QuickSight dataset for unused role permissions"
-  value       = module.quicksight.unused_permissions_dataset_arn
+  description = "ARN of the QuickSight dataset for unused role permissions (empty when enable_quicksight = false)"
+  value       = var.enable_quicksight ? module.quicksight[0].unused_permissions_dataset_arn : ""
 }
 
 output "quicksight_stale_keys_dataset_arn" {
-  description = "ARN of the QuickSight dataset for stale access keys"
-  value       = module.quicksight.stale_keys_dataset_arn
+  description = "ARN of the QuickSight dataset for stale access keys (empty when enable_quicksight = false)"
+  value       = var.enable_quicksight ? module.quicksight[0].stale_keys_dataset_arn : ""
 }
 
 output "quicksight_scp_violations_dataset_arn" {
-  description = "ARN of the QuickSight dataset for SCP violations"
-  value       = module.quicksight.scp_violations_dataset_arn
+  description = "ARN of the QuickSight dataset for SCP violations (empty when enable_quicksight = false)"
+  value       = var.enable_quicksight ? module.quicksight[0].scp_violations_dataset_arn : ""
 }
 
 output "quicksight_user_arn" {

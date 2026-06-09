@@ -99,6 +99,26 @@ resource "aws_s3_bucket_policy" "findings_enforce_tls" {
           Bool = { "aws:SecureTransport" = "false" }
         }
       },
+      {
+        Sid    = "AllowQuickSightService"
+        Effect = "Allow"
+        Principal = { Service = "quicksight.amazonaws.com" }
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+          "s3:PutObject",
+          "s3:ListBucketMultipartUploads",
+          "s3:AbortMultipartUpload",
+        ]
+        Resource = [
+          aws_s3_bucket.findings.arn,
+          "${aws_s3_bucket.findings.arn}/*",
+        ]
+        Condition = {
+          StringEquals = { "aws:SourceAccount" = var.account_id }
+        }
+      },
     ]
   })
 }
@@ -196,7 +216,7 @@ resource "aws_glue_crawler" "iam_findings" {
 
   schema_change_policy {
     delete_behavior = "LOG"
-    update_behavior = "UPDATE_IN_DATABASE"
+    update_behavior = "LOG"
   }
 
   recrawl_policy {

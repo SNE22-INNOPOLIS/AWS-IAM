@@ -44,6 +44,12 @@ variable "findings_bucket_arn" {
   description = "ARN of the findings S3 bucket (used in IAM policy)"
 }
 
+variable "quicksight_service_role_name" {
+  type        = string
+  default     = "aws-quicksight-service-role-v0"
+  description = "Name of the IAM role QuickSight uses for Athena connection tests. Find it with: aws iam list-roles --query 'Roles[?contains(RoleName,`quicksight`)].RoleName'"
+}
+
 variable "tags" {
   type        = map(string)
   description = "Tags applied to all resources in this module"

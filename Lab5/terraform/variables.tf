@@ -90,3 +90,15 @@ variable "lambda_memory_size" {
   default     = 512
   description = "Memory allocated to the Lambda function in MB"
 }
+
+variable "enable_quicksight" {
+  type        = bool
+  default     = false
+  description = "Set to true only after subscribing to QuickSight in this account (Console → QuickSight → Sign up). Deploying before subscription returns ResourceNotFoundException."
+}
+
+variable "quicksight_service_role_name" {
+  type        = string
+  default     = "aws-quicksight-service-role-v0"
+  description = "Name of the IAM role QuickSight auto-creates on first sign-up. Find it with: aws iam list-roles --query 'Roles[?contains(RoleName,`quicksight`)].RoleName' --profile security"
+}

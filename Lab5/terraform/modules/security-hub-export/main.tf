@@ -154,7 +154,7 @@ resource "aws_lambda_function" "aggregator" {
       FINDINGS_BUCKET        = var.findings_bucket_name
       ANALYZER_ARN           = var.analyzer_arn
       KEY_AGE_THRESHOLD_DAYS = tostring(var.key_age_threshold_days)
-      AWS_DEFAULT_REGION     = var.aws_region
+      IAM_DASHBOARD_REGION   = var.aws_region
     }
   }
 

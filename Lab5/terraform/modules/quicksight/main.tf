@@ -24,6 +24,38 @@ terraform {
 # =============================================================================
 
 # ---------------------------------------------------------------------------
+# Grant the QuickSight service role S3 access to the findings bucket.
+# QuickSight runs the Athena connection test using its own service role
+# (created automatically when QuickSight is subscribed), so we must attach
+# a policy directly to that role rather than relying on bucket policies.
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role_policy" "quicksight_service_role_s3" {
+  name = "${var.project_name}-qs-service-role-s3"
+  role = var.quicksight_service_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "FindingsBucketAccess"
+      Effect = "Allow"
+      Action = [
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:PutObject",
+        "s3:ListBucketMultipartUploads",
+        "s3:AbortMultipartUpload",
+      ]
+      Resource = [
+        "arn:aws:s3:::${var.findings_bucket_name}",
+        "arn:aws:s3:::${var.findings_bucket_name}/*",
+      ]
+    }]
+  })
+}
+
+# ---------------------------------------------------------------------------
 # IAM role for QuickSight to access Athena + S3
 # ---------------------------------------------------------------------------
 
@@ -215,7 +247,7 @@ resource "aws_quicksight_data_set" "unused_permissions" {
   tags           = var.tags
 
   physical_table_map {
-    physical_table_map_id = "unused_permissions_query"
+    physical_table_map_id = "unused-permissions-query"
     custom_sql {
       data_source_arn = aws_quicksight_data_source.athena.arn
       name            = "unused_permissions_daily"
@@ -253,7 +285,7 @@ resource "aws_quicksight_data_set" "stale_keys" {
   tags           = var.tags
 
   physical_table_map {
-    physical_table_map_id = "stale_keys_query"
+    physical_table_map_id = "stale-keys-query"
     custom_sql {
       data_source_arn = aws_quicksight_data_source.athena.arn
       name            = "stale_keys_daily"
@@ -287,7 +319,7 @@ resource "aws_quicksight_data_set" "scp_violations" {
   tags           = var.tags
 
   physical_table_map {
-    physical_table_map_id = "scp_violations_query"
+    physical_table_map_id = "scp-violations-query"
     custom_sql {
       data_source_arn = aws_quicksight_data_source.athena.arn
       name            = "scp_violations_daily"

@@ -46,6 +46,7 @@ module "security_hub_export" {
 }
 
 module "quicksight" {
+  count  = var.enable_quicksight ? 1 : 0
   source = "./modules/quicksight"
 
   providers = {
@@ -55,8 +56,9 @@ module "quicksight" {
   project_name          = var.project_name
   account_id            = var.security_account_id
   aws_region            = var.primary_region
-  quicksight_user_arn   = var.quicksight_user_arn
-  quicksight_namespace  = var.quicksight_namespace
+  quicksight_user_arn          = var.quicksight_user_arn
+  quicksight_namespace         = var.quicksight_namespace
+  quicksight_service_role_name = var.quicksight_service_role_name
   glue_database_name    = module.data_pipeline.glue_database_name
   athena_workgroup_name = module.data_pipeline.athena_workgroup_name
   findings_bucket_name  = module.data_pipeline.findings_bucket_name
