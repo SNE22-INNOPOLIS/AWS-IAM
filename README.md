@@ -15,7 +15,7 @@ Each lab is self-contained, builds on the previous one, and is tracked against a
 | [Lab 3](Lab3/) | IAM Preventative Guardrails | [[GOVERNANCE] Deploy Service Control Policies (SCPs) for Guardrails](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/3) | Complete |
 | [Lab 4 ](https://github.com/SNE22-INNOPOLIS/AWS-IAM/tree/main/Lab4)| Automated Credential Rotation Lambda | [[AUTOMATE] Build Automated Credential Rotation Lambda](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/4) | Planned |
 | Lab 5 | Security Posture Dashboard | [[VISUALIZE] Create Security Posture Dashboard (QuickSight/Security Hub)](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/5) | Planned |
-| Lab 6 | Architecture Diagram & Operational Runbook | [[DOCUMENT] Architecture Diagram & Operational Runbook](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/6) | Planned |
+| [Lab 6](Lab6/) | Architecture Diagram & Operational Runbook | [[DOCUMENT] Architecture Diagram & Operational Runbook](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/6) | Complete |
 | Lab 7 | Security Validation & Penetration Test | [[TEST] Security Validation & Penetration Test](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/7) | Planned |
 
 ---
@@ -31,6 +31,14 @@ All labs target a two-account AWS organisation structure:
 
 AWS CLI profiles used throughout: `security` and `dev`.  
 Primary region: `us-east-1`.
+
+---
+
+## Architecture
+
+![Architecture diagram of the AWS IAM security portfolio, showing data flow between the Security and Dev accounts across Labs 1-5](docs/architecture.png)
+
+Full write-up, regeneration script, and the operational runbook (leaked access key response + emergency SCP bypass) live in [Lab6/](Lab6/).
 
 ---
 
@@ -60,17 +68,27 @@ AWS-IAM/
 │           ├── iam-audit-lambda/
 │           └── s3-reports-bucket/
 │
-└── Lab3/                          # Preventative guardrails
-    ├── docs/
-    │   └── breakglass-procedure.md
-    ├── scripts/guardrail-enforcement/
-    │   ├── lambda_function.py     # Boundary auto-attachment Lambda
-    │   └── permission_boundary_checker.py  # Config rule Lambda
-    └── terraform/
-        └── modules/
-            ├── permission-boundaries/
-            ├── guardrails/
-            └── breakglass/
+├── Lab3/                          # Preventative guardrails
+│   ├── docs/
+│   │   └── breakglass-procedure.md
+│   ├── scripts/guardrail-enforcement/
+│   │   ├── lambda_function.py     # Boundary auto-attachment Lambda
+│   │   └── permission_boundary_checker.py  # Config rule Lambda
+│   └── terraform/
+│       └── modules/
+│           ├── permission-boundaries/
+│           ├── guardrails/
+│           └── breakglass/
+│
+├── Lab6/                          # Architecture diagram & operational runbook
+│   ├── docs/
+│   │   ├── incident-response-runbook.md
+│   │   └── social/
+│   └── scripts/
+│       └── generate_architecture_diagram.py
+│
+└── docs/
+    └── architecture.png           # Whole-portfolio architecture & data-flow diagram
 ```
 
 ---
@@ -121,6 +139,20 @@ Shifts from detection to prevention — blocking dangerous IAM actions before th
 - **Enforcement Lambda** (`modules/guardrails`): EventBridge rules watch for `CreateRole` and `CreateUser` CloudTrail events in the Dev account; the Lambda automatically attaches the permission boundary within seconds. A `scan_all` invocation remediates existing non-compliant principals.
 - **AWS Config Rules** (`modules/guardrails`): Six rules (one custom Lambda, five AWS-managed) continuously evaluate IAM compliance in the Dev account: permission boundary presence, MFA enablement, root MFA, inline policies, key rotation, and password policy.
 - **Break Glass Role** (`modules/breakglass`): An emergency IAM role tagged `Purpose=BreakGlass` that bypasses all boundary deny conditions. Console Switch Role is available only in the Security account (via the `Administrators` group with an MFA-required assume policy). Dev account Break Glass access requires cross-account assumption from the Security account's Break Glass role. Every assumption attempt triggers an SNS email alert.
+
+---
+
+### Lab 6 — Architecture Diagram & Operational Runbook
+
+**Issue:** [#6 — [DOCUMENT] Architecture Diagram & Operational Runbook](https://github.com/SNE22-INNOPOLIS/AWS-IAM/issues/6)  
+**Directory:** [Lab6/](Lab6/)  
+**Lab README:** [Lab6/README.md](Lab6/README.md)
+
+Documentation-only lab — no Terraform, no AWS resources. Ties Labs 1-5 together for anyone operating or maintaining the environment.
+
+- **Architecture diagram** ([docs/architecture.png](docs/architecture.png)): whole-portfolio, two-account data-flow diagram, regenerated from [Lab6/scripts/generate_architecture_diagram.py](Lab6/scripts/generate_architecture_diagram.py).
+- **Incident response runbook** ([Lab6/docs/incident-response-runbook.md](Lab6/docs/incident-response-runbook.md)): specific CLI commands for containing and rotating a leaked IAM access key, plus an emergency SCP-bypass procedure that defers to the Lab 3 Break Glass role first and only covers org-level SCP detachment as a documented last resort.
+- No credentials, account IDs used as secrets, or key material appear in any Lab 6 document — every command uses a `<PLACEHOLDER>`.
 
 ---
 
